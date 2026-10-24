@@ -1,5 +1,13 @@
 service:
   host: 127.0.0.1
   port: 8080
+  labels: [base, shared]
+  clearable: [legacy]
+  token: example-token
+  retired: true
+  nested:
+    retries: 3
+    timeout_seconds: 30
 logging:
   level: info
+  format: json

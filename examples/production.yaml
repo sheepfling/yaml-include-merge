@@ -1,7 +1,13 @@
 %LOADER LoadInclude
 ---
-<<: !include "base.yaml"
+<<: !include region.yaml
 service:
   port: 8081
+  labels: [production]
+  clearable: []
+  token: null
+  retired: !delete
+  nested:
+    timeout_seconds: 45
 logging:
   level: warning

@@ -4,10 +4,10 @@ A small PyYAML adapter for ordinary safe YAML loading, bounded file includes,
 and deterministic configuration overlays. It reuses PyYAML's SafeLoader; it
 does not implement a YAML parser.
 
-## Use it in a normal Python configuration workflow
+## Quick start
 
-Install the package in the project's environment, then pass a configuration
-path through the dispatcher:
+Install the package in the project's environment, then pass an ordinary YAML
+file to `load_yaml_file`:
 
     python -m pip install .
 
@@ -15,7 +15,12 @@ path through the dispatcher:
 
     from yaml_include_merge import load_yaml_file
 
-    config = load_yaml_file(Path("config/production.yaml"))
+    config = load_yaml_file(Path("config.yaml"))
+
+The same call also dispatches files that opt into includes with
+`%LOADER LoadInclude`. See the [worked examples](docs/examples.md) for the
+base, intermediate layer, production overlay, resolved value, and in-memory
+resolver.
 
 Documents without the package header are loaded with a duplicate-key-checking
 subclass of PyYAML's SafeLoader. Python-specific object tags are not enabled.
@@ -112,6 +117,14 @@ The returned values are ordinary Python structures and do not retain per-key
 origin metadata. The standard PyYAML object model does not preserve comments or
 formatting; use a round-trip YAML library such as ruamel.yaml when those are
 required.
+
+The built-in include limits are package-selected starting bounds, not values
+defined by the YAML specification or derived from measured application
+workloads. The defaults are 16 nested include levels, 64 included files, 1 MiB
+per included file, and 8 MiB total included content. They bound include data;
+the caller controls the top-level input stream. Tune them for the size and
+shape of the application's configuration using the `max_*` arguments on the
+loader facade or loading functions.
 
 ## Run the example and tests
 
