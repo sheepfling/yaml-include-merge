@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "yaml-include-merge"
+version = "0.1.0"
+description = "Safe YAML loading with file includes and mapping overrides"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = ["PyYAML>=6.0,<7"]
+keywords = ["yaml", "include", "configuration", "merge"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python :: 3",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]

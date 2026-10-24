@@ -1,0 +1,7 @@
+%LOADER LoadInclude
+---
+<<: !include "base.yaml"
+service:
+  port: 8081
+logging:
+  level: warning
