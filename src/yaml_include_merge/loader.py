@@ -11,11 +11,23 @@ import yaml
 from yaml import MappingNode, Node, SafeLoader, ScalarNode
 from yaml.constructor import ConstructorError
 
-from ._paths import resolve_include_file
+from .resolver import (
+    FileRoot,
+    FileSource,
+    FileSystemIncludeResolver,
+    IncludeRequest,
+    IncludeResolver,
+    IncludeRoot,
+    IncludeSource,
+    MemoryRoot,
+    MemorySource,
+    validate_include_name,
+)
 from ._unset import UNSET, UnsetType
 
 __all__ = (
     "IncludeLoader",
+    "YamlConfigLoader",
     "YamlDirective",
     "YamlIncludeError",
     "load_yaml_dispatch",
@@ -51,6 +63,7 @@ class _IncludeBudget:
     max_total_include_bytes: int
     include_files: int = 0
     include_bytes: int = 0
+    current_depth: int = 0
 
 
 class _NamedStringIO(StringIO):
@@ -73,6 +86,23 @@ def _source_path(stream: TextIO, source_path: str | Path | None) -> Path | None:
     if candidate == "<yaml stream>":
         return None
     return Path(candidate).resolve(strict=True)
+
+
+def _source_ref(
+    stream: TextIO,
+    source_path: str | Path | None,
+    source: IncludeSource | None,
+) -> IncludeSource | None:
+    if source is not None and source_path is not None:
+        raise ValueError("pass either source or source_path, not both")
+    if source is not None:
+        if isinstance(source, FileSource):
+            return FileSource(Path(source.path).resolve(strict=True))
+        if isinstance(source, MemorySource):
+            return source
+        raise TypeError("source must be a FileSource or MemorySource")
+    path = _source_path(stream, source_path)
+    return FileSource(path) if path is not None else None
 
 
 def _header_directives(text: str) -> tuple[list[YamlDirective], list[int]]:
@@ -146,15 +176,62 @@ def get_yaml_directives(path_or_file: str | Path | TextIO) -> list[YamlDirective
     return directives
 
 
-def _normalize_directories(paths: Iterable[str | Path]) -> tuple[Path, ...]:
-    normalized: list[Path] = []
+def _normalize_roots(paths: Iterable[str | Path | IncludeRoot]) -> tuple[IncludeRoot, ...]:
+    normalized: list[IncludeRoot] = []
     for value in paths:
-        path = Path(value).resolve(strict=True)
-        if not path.is_dir():
-            raise ValueError(f"include root is not a directory: {path}")
-        if path not in normalized:
-            normalized.append(path)
+        if isinstance(value, MemoryRoot):
+            root: IncludeRoot = value
+        elif isinstance(value, FileRoot):
+            path = Path(value.path).resolve(strict=True)
+            if not path.is_dir():
+                raise ValueError(f"include root is not a directory: {path}")
+            root = FileRoot(path)
+        else:
+            path = Path(value).resolve(strict=True)
+            if not path.is_dir():
+                raise ValueError(f"include root is not a directory: {path}")
+            root = FileRoot(path)
+        if root not in normalized:
+            normalized.append(root)
     return tuple(normalized)
+
+
+def _source_is_within_roots(source: IncludeSource, roots: Iterable[IncludeRoot]) -> bool:
+    if isinstance(source, FileSource):
+        try:
+            canonical = source.path.resolve(strict=True)
+        except (OSError, RuntimeError):
+            return False
+        return canonical.is_file() and any(
+            isinstance(root, FileRoot) and canonical.is_relative_to(root.path)
+            for root in roots
+        )
+    return any(isinstance(root, MemoryRoot) and source.root == root for root in roots)
+
+
+def _include_source_label(source: IncludeSource) -> str:
+    if isinstance(source, FileSource):
+        return str(source.path)
+    return f"memory:{source.root.namespace}/{source.path.as_posix()}"
+
+
+def _read_bounded(stream: Any, limit: int) -> bytes:
+    """Read a binary stream completely up to its limit plus the caller's probe byte."""
+    content = bytearray()
+    remaining = limit
+    while remaining:
+        chunk = stream.read(remaining)
+        if chunk is None:
+            raise OSError("include resolver stream returned no blocking read result")
+        if not isinstance(chunk, bytes):
+            raise TypeError("include resolver streams must return bytes")
+        if len(chunk) > remaining:
+            raise ValueError("include resolver stream returned more bytes than requested")
+        if not chunk:
+            break
+        content.extend(chunk)
+        remaining -= len(chunk)
+    return bytes(content)
 
 
 def _deep_merge(base: dict[Any, Any], overlay: dict[Any, Any]) -> dict[Any, Any]:
@@ -251,11 +328,13 @@ class IncludeLoader(SafeLoader):
         stream: TextIO,
         *,
         current_file: Path | None,
-        search_paths: Iterable[Path],
-        allowed_roots: Iterable[Path],
+        search_paths: Iterable[IncludeRoot],
+        allowed_roots: Iterable[IncludeRoot],
         recursive_dispatch: bool,
-        load_stack: Iterable[Path],
+        load_stack: Iterable[IncludeSource],
         budget: _IncludeBudget,
+        include_resolver: IncludeResolver | None = None,
+        source: IncludeSource | None = None,
     ) -> None:
         super().__init__(stream)
         self.current_file = current_file
@@ -264,6 +343,8 @@ class IncludeLoader(SafeLoader):
         self.recursive_dispatch = recursive_dispatch
         self.load_stack = tuple(load_stack)
         self.budget = budget
+        self.include_resolver = include_resolver or FileSystemIncludeResolver()
+        self.source = source or (FileSource(current_file) if current_file is not None else None)
 
     @staticmethod
     def _construct_include(loader: IncludeLoader, node: Node) -> YamlType:
@@ -298,60 +379,65 @@ class IncludeLoader(SafeLoader):
         if not isinstance(name, str) or not name:
             self._include_error(node, "!include expects a non-empty path")
         try:
-            include_file = resolve_include_file(
-                name,
-                current_file=self.current_file,
-                search_paths=self.search_paths,
-                allowed_roots=self.allowed_roots,
+            validate_include_name(name)
+        except ValueError as exc:
+            self._include_error(node, str(exc), exc)
+        try:
+            resolved = self.include_resolver.resolve(
+                IncludeRequest(
+                    name=name,
+                    including=self.source,
+                    search_paths=self.search_paths,
+                    allowed_roots=self.allowed_roots,
+                )
             )
         except (OSError, ValueError) as exc:
             self._include_error(node, str(exc), exc)
 
-        if include_file in self.load_stack:
+        try:
+            include_source = _canonical_source(resolved.source)
+        except (OSError, RuntimeError, ValueError, TypeError) as exc:
+            self._include_error(node, f"resolver returned an invalid source: {exc}", exc)
+        if not _source_is_within_roots(include_source, self.allowed_roots):
             self._include_error(
                 node,
-                "include cycle detected: " + " -> ".join(map(str, (*self.load_stack, include_file))),
+                f"include source {_include_source_label(include_source)!r} is outside the allowed roots",
             )
-        include_depth = max(0, len(self.load_stack) - 1)
-        if include_depth >= self.budget.max_include_depth:
+        if include_source in self.load_stack:
+            self._include_error(
+                node,
+                "include cycle detected: "
+                + " -> ".join(_include_source_label(item) for item in (*self.load_stack, include_source)),
+            )
+        if self.budget.current_depth >= self.budget.max_include_depth:
             self._include_error(
                 node,
                 f"maximum include depth ({self.budget.max_include_depth}) exceeded",
             )
 
-        try:
-            size = include_file.stat().st_size
-        except OSError as exc:
-            self._include_error(node, f"cannot stat include file {include_file}: {exc}", exc)
-        if size > self.budget.max_file_bytes:
-            self._include_error(
-                node,
-                f"include file {include_file} exceeds the per-file size limit "
-                f"({self.budget.max_file_bytes} bytes)",
-            )
         if self.budget.include_files + 1 > self.budget.max_include_files:
             self._include_error(
                 node,
                 f"maximum include count ({self.budget.max_include_files}) exceeded",
             )
-        if self.budget.include_bytes + size > self.budget.max_total_include_bytes:
+        remaining_bytes = self.budget.max_total_include_bytes - self.budget.include_bytes
+        if remaining_bytes < 0:
             self._include_error(
                 node,
                 "maximum total included bytes "
                 f"({self.budget.max_total_include_bytes}) exceeded",
             )
+        read_limit = min(self.budget.max_file_bytes, remaining_bytes)
         try:
-            with include_file.open("rb") as stream:
-                content = stream.read(self.budget.max_file_bytes + 1)
+            with resolved.open_binary() as stream:
+                content = _read_bounded(stream, read_limit + 1)
             if len(content) > self.budget.max_file_bytes:
                 self._include_error(
                     node,
-                    f"include file {include_file} exceeds the per-file size limit "
+                    f"include source {_include_source_label(include_source)} exceeds the per-file size limit "
                     f"({self.budget.max_file_bytes} bytes)",
                 )
-            if len(content) != size:
-                self._include_error(node, f"include file {include_file} changed while being read")
-            if self.budget.include_bytes + len(content) > self.budget.max_total_include_bytes:
+            if len(content) > remaining_bytes:
                 self._include_error(
                     node,
                     "maximum total included bytes "
@@ -362,24 +448,37 @@ class IncludeLoader(SafeLoader):
             try:
                 text = content.decode("utf-8")
             except UnicodeDecodeError as exc:
-                self._include_error(node, f"include file {include_file} is not UTF-8 text", exc)
-            stream = _NamedStringIO(text, str(include_file))
-            if self.recursive_dispatch:
-                return load_yaml_dispatch(
-                    stream,
-                    search_paths=(include_file.parent, *self.search_paths),
-                    loader_tag="LoadInclude",
-                    recursive_dispatch=True,
-                    load_stack=(*self.load_stack, include_file),
-                    source_path=include_file,
-                    allowed_roots=self.allowed_roots,
-                    _budget=self.budget,
+                self._include_error(
+                    node,
+                    f"include source {_include_source_label(include_source)} is not UTF-8 text",
+                    exc,
                 )
+            stream = _NamedStringIO(text, _include_source_label(include_source))
+            if self.recursive_dispatch:
+                self.budget.current_depth += 1
+                try:
+                    return load_yaml_dispatch(
+                        stream,
+                        search_paths=self.search_paths,
+                        loader_tag="LoadInclude",
+                        recursive_dispatch=True,
+                        load_stack=(*self.load_stack, include_source),
+                        source=include_source,
+                        allowed_roots=self.allowed_roots,
+                        include_resolver=self.include_resolver,
+                        _budget=self.budget,
+                    )
+                finally:
+                    self.budget.current_depth -= 1
             return yaml.load(stream, Loader=UniqueKeySafeLoader)
         except yaml.YAMLError:
             raise
-        except OSError as exc:
-            self._include_error(node, f"cannot read include file {include_file}: {exc}", exc)
+        except (OSError, TypeError, ValueError) as exc:
+            self._include_error(
+                node,
+                f"cannot read include source {_include_source_label(include_source)}: {exc}",
+                exc,
+            )
 
     def construct_mapping(self, node: MappingNode, deep: bool = False) -> YamlDict:
         if not isinstance(node, MappingNode):
@@ -462,69 +561,115 @@ IncludeLoader.add_constructor("!include", IncludeLoader._construct_include)
 IncludeLoader.add_constructor("!delete", IncludeLoader._construct_delete)
 
 
+def _validate_limits(
+    max_include_depth: int,
+    max_include_files: int,
+    max_file_bytes: int,
+    max_total_include_bytes: int,
+) -> None:
+    limits = (max_include_depth, max_include_files, max_file_bytes, max_total_include_bytes)
+    if any(not isinstance(value, int) or value < 0 for value in limits):
+        raise ValueError("include limits must be non-negative integers")
+
+
+def _canonical_source(source: IncludeSource) -> IncludeSource:
+    if isinstance(source, FileSource):
+        return FileSource(Path(source.path).resolve(strict=True))
+    if isinstance(source, MemorySource):
+        return source
+    raise TypeError("include resolvers must return a FileSource or MemorySource")
+
+
 def load_yaml_dispatch(
     stream: TextIO,
-    search_paths: Iterable[Path] | None = None,
+    search_paths: Iterable[str | Path | IncludeRoot] | None = None,
     loader_tag: str | None | UnsetType = UNSET,
     recursive_dispatch: bool = True,
-    load_stack: Iterable[Path] | None = None,
+    load_stack: Iterable[Path | IncludeSource] | None = None,
     *,
     source_path: str | Path | None = None,
-    allowed_roots: Iterable[str | Path] | None = None,
+    source: IncludeSource | None = None,
+    allowed_roots: Iterable[str | Path | IncludeRoot] | None = None,
+    include_resolver: IncludeResolver | None = None,
     max_include_depth: int = 16,
     max_include_files: int = 64,
     max_file_bytes: int = 1_048_576,
     max_total_include_bytes: int = 8_388_608,
     _budget: _IncludeBudget | None = None,
 ) -> YamlType:
-    """Load ordinary YAML safely or opt into the file-include adapter.
+    """Load ordinary safe YAML or dispatch to bounded local includes.
 
-    The package-specific %LOADER directive is removed before the YAML parser
-    sees the document. PyYAML's SafeLoader remains the parser and constructor
-    base for both paths.
+    A caller-provided resolver is trusted code and must honor the request roots
+    without network access. The loader validates returned source identities,
+    owns and closes opened byte streams, enforces budgets, and uses SafeLoader.
+    Each public call creates a fresh include budget and source stack.
     """
     name = _stream_name(stream)
-    source = _source_path(stream, source_path)
+    source_ref = _source_ref(stream, source_path, source)
     text = stream.read()
     if not isinstance(text, str):
         raise TypeError("YAML input streams must return text")
     cleaned, header_tag = _strip_loader_directive(text)
 
     effective_tag = header_tag if isinstance(loader_tag, UnsetType) else loader_tag
+    if isinstance(source_ref, FileSource):
+        source_name = str(source_ref.path)
+    elif source_ref is not None:
+        source_name = _include_source_label(source_ref)
+    else:
+        source_name = name
     if effective_tag != "LoadInclude":
         if effective_tag is not None:
             log.warning("Unknown %%LOADER directive: %r, defaulting to safe_loader", effective_tag)
-        return yaml.load(
-            _NamedStringIO(cleaned, str(source) if source else name),
-            Loader=UniqueKeySafeLoader,
-        )
+        return yaml.load(_NamedStringIO(cleaned, source_name), Loader=UniqueKeySafeLoader)
 
-    paths = _normalize_directories(search_paths or ())
-    roots_input: Iterable[str | Path]
+    paths = _normalize_roots(search_paths or ())
     if allowed_roots is None:
-        roots_input = ([source.parent] if source is not None else []) + list(paths)
+        roots_input: list[str | Path | IncludeRoot] = list(paths)
+        if isinstance(source_ref, FileSource):
+            roots_input.insert(0, source_ref.path.parent)
+        elif isinstance(source_ref, MemorySource):
+            roots_input.insert(0, source_ref.root)
     else:
-        roots_input = allowed_roots
-    roots = _normalize_directories(roots_input)
+        roots_input = list(allowed_roots)
+    roots = _normalize_roots(roots_input)
+    if not roots:
+        raise ValueError("include loading requires at least one allowed root")
 
-    stack = tuple(Path(item).resolve(strict=True) for item in (load_stack or ()))
-    if source is not None and source not in stack:
-        stack = (*stack, source)
-    budget = _budget or _IncludeBudget(
-        max_include_depth=max_include_depth,
-        max_include_files=max_include_files,
-        max_file_bytes=max_file_bytes,
-        max_total_include_bytes=max_total_include_bytes,
-    )
-    loader_stream = _NamedStringIO(cleaned, str(source) if source else name)
+    _validate_limits(max_include_depth, max_include_files, max_file_bytes, max_total_include_bytes)
+    stack: list[IncludeSource] = []
+    for item in load_stack or ():
+        if isinstance(item, (FileSource, MemorySource)):
+            stack.append(_canonical_source(item))
+        else:
+            stack.append(FileSource(Path(item).resolve(strict=True)))
+    if source_ref is not None:
+        source_ref = _canonical_source(source_ref)
+        if source_ref not in stack:
+            stack.append(source_ref)
+    if _budget is None:
+        seeded_depth = len(stack) - (1 if source_ref is not None and source_ref in stack else 0)
+        budget = _IncludeBudget(
+            max_include_depth=max_include_depth,
+            max_include_files=max_include_files,
+            max_file_bytes=max_file_bytes,
+            max_total_include_bytes=max_total_include_bytes,
+            current_depth=max(0, seeded_depth),
+        )
+    else:
+        budget = _budget
+    resolver = include_resolver or FileSystemIncludeResolver()
+    loader_stream = _NamedStringIO(cleaned, source_name)
     loader = IncludeLoader(
         loader_stream,
-        current_file=source,
+        current_file=source_ref.path if isinstance(source_ref, FileSource) else None,
+        source=source_ref,
         search_paths=paths,
         allowed_roots=roots,
         recursive_dispatch=recursive_dispatch,
         load_stack=stack,
         budget=budget,
+        include_resolver=resolver,
     )
     try:
         result = loader.get_single_data()
@@ -536,18 +681,20 @@ def load_yaml_dispatch(
 
 def load_yaml_include(
     stream: TextIO,
-    search_paths: Iterable[Path] | None = None,
+    search_paths: Iterable[str | Path | IncludeRoot] | None = None,
     recursive_dispatch: bool = True,
-    load_stack: Iterable[Path] | None = None,
+    load_stack: Iterable[Path | IncludeSource] | None = None,
     *,
     source_path: str | Path | None = None,
-    allowed_roots: Iterable[str | Path] | None = None,
+    source: IncludeSource | None = None,
+    allowed_roots: Iterable[str | Path | IncludeRoot] | None = None,
+    include_resolver: IncludeResolver | None = None,
     max_include_depth: int = 16,
     max_include_files: int = 64,
     max_file_bytes: int = 1_048_576,
     max_total_include_bytes: int = 8_388_608,
 ) -> YamlType:
-    """Explicitly load YAML with file includes and mapping overlays."""
+    """Explicitly load YAML with includes and mapping overlays."""
     return load_yaml_dispatch(
         stream,
         search_paths=search_paths,
@@ -555,7 +702,9 @@ def load_yaml_include(
         recursive_dispatch=recursive_dispatch,
         load_stack=load_stack,
         source_path=source_path,
+        source=source,
         allowed_roots=allowed_roots,
+        include_resolver=include_resolver,
         max_include_depth=max_include_depth,
         max_include_files=max_include_files,
         max_file_bytes=max_file_bytes,
@@ -565,28 +714,116 @@ def load_yaml_include(
 
 def load_yaml_file(
     path: str | Path,
-    search_paths: Iterable[str | Path] | None = None,
+    search_paths: Iterable[str | Path | IncludeRoot] | None = None,
     *,
     loader_tag: str | None | UnsetType = UNSET,
-    allowed_roots: Iterable[str | Path] | None = None,
+    allowed_roots: Iterable[str | Path | IncludeRoot] | None = None,
+    include_resolver: IncludeResolver | None = None,
+    recursive_dispatch: bool = True,
     max_include_depth: int = 16,
     max_include_files: int = 64,
     max_file_bytes: int = 1_048_576,
     max_total_include_bytes: int = 8_388_608,
 ) -> YamlType:
     """Load a configuration path with the normal dispatch policy."""
-    source = Path(path).resolve(strict=True)
-    if not source.is_file():
-        raise FileNotFoundError(f"YAML path is not a file: {source}")
-    with source.open("r", encoding="utf-8") as stream:
+    source_path = Path(path).resolve(strict=True)
+    if not source_path.is_file():
+        raise FileNotFoundError(f"YAML path is not a file: {source_path}")
+    with source_path.open("r", encoding="utf-8") as stream:
         return load_yaml_dispatch(
             stream,
             search_paths=search_paths,
             loader_tag=loader_tag,
-            source_path=source,
+            recursive_dispatch=recursive_dispatch,
+            source_path=source_path,
             allowed_roots=allowed_roots,
+            include_resolver=include_resolver,
             max_include_depth=max_include_depth,
             max_include_files=max_include_files,
             max_file_bytes=max_file_bytes,
             max_total_include_bytes=max_total_include_bytes,
+        )
+
+
+class YamlConfigLoader:
+    """Reusable loader configuration with independent state for each call."""
+
+    def __init__(
+        self,
+        *,
+        include_resolver: IncludeResolver | None = None,
+        search_paths: Iterable[str | Path | IncludeRoot] | None = None,
+        allowed_roots: Iterable[str | Path | IncludeRoot] | None = None,
+        recursive_dispatch: bool = True,
+        max_include_depth: int = 16,
+        max_include_files: int = 64,
+        max_file_bytes: int = 1_048_576,
+        max_total_include_bytes: int = 8_388_608,
+    ) -> None:
+        _validate_limits(max_include_depth, max_include_files, max_file_bytes, max_total_include_bytes)
+        self.include_resolver = include_resolver
+        self.search_paths = tuple(search_paths or ())
+        self.allowed_roots = tuple(allowed_roots) if allowed_roots is not None else None
+        self.recursive_dispatch = recursive_dispatch
+        self.max_include_depth = max_include_depth
+        self.max_include_files = max_include_files
+        self.max_file_bytes = max_file_bytes
+        self.max_total_include_bytes = max_total_include_bytes
+
+    def load_file(self, path: str | Path, *, loader_tag: str | None | UnsetType = UNSET) -> YamlType:
+        return load_yaml_file(
+            path,
+            search_paths=self.search_paths,
+            loader_tag=loader_tag,
+            allowed_roots=self.allowed_roots,
+            include_resolver=self.include_resolver,
+            recursive_dispatch=self.recursive_dispatch,
+            max_include_depth=self.max_include_depth,
+            max_include_files=self.max_include_files,
+            max_file_bytes=self.max_file_bytes,
+            max_total_include_bytes=self.max_total_include_bytes,
+        )
+
+    def load_stream(
+        self,
+        stream: TextIO,
+        *,
+        source_path: str | Path | None = None,
+        source: IncludeSource | None = None,
+        loader_tag: str | None | UnsetType = UNSET,
+    ) -> YamlType:
+        return load_yaml_dispatch(
+            stream,
+            search_paths=self.search_paths,
+            loader_tag=loader_tag,
+            recursive_dispatch=self.recursive_dispatch,
+            source_path=source_path,
+            source=source,
+            allowed_roots=self.allowed_roots,
+            include_resolver=self.include_resolver,
+            max_include_depth=self.max_include_depth,
+            max_include_files=self.max_include_files,
+            max_file_bytes=self.max_file_bytes,
+            max_total_include_bytes=self.max_total_include_bytes,
+        )
+
+    def load_include(
+        self,
+        stream: TextIO,
+        *,
+        source_path: str | Path | None = None,
+        source: IncludeSource | None = None,
+    ) -> YamlType:
+        return load_yaml_include(
+            stream,
+            search_paths=self.search_paths,
+            recursive_dispatch=self.recursive_dispatch,
+            source_path=source_path,
+            source=source,
+            allowed_roots=self.allowed_roots,
+            include_resolver=self.include_resolver,
+            max_include_depth=self.max_include_depth,
+            max_include_files=self.max_include_files,
+            max_file_bytes=self.max_file_bytes,
+            max_total_include_bytes=self.max_total_include_bytes,
         )

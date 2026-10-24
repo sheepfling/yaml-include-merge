@@ -35,6 +35,14 @@ its loader rejects duplicate keys by default and that PyYAML does not enforce
 the uniqueness rule. This implementation adds that check on top of SafeLoader
 without changing PyYAML's constructor model.
 
+Include lookup is behind a small `IncludeResolver` protocol. The built-in
+filesystem resolver enforces canonical allowed roots; the in-memory resolver
+uses an explicit namespace. The loader retains source identities for nested
+relative lookup and cycle detection, owns and closes returned streams, enforces
+the same depth/count/byte limits, and performs all parsing and merging. An
+injected resolver is trusted application code and must honor its requested
+roots; the built-in implementation does not perform network access.
+
 The supported Python alternative for round-trip editing is
 [ruamel.yaml](https://yaml.dev/doc/ruamel.yaml/). Its round-trip API preserves
 comments, ordering, and hand-written anchors. Its safe mode is available

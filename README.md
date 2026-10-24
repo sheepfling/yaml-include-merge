@@ -26,9 +26,45 @@ The existing APIs remain available when a caller already owns a stream:
     config = load_yaml_dispatch(stream)  # ordinary safe YAML or header dispatch
     config = load_yaml_include(stream, search_paths=[Path("config")])  # explicit
 
-An in-memory stream that uses !include must supply search_paths or
-allowed_roots; the current working directory is never an implicit include
-root.
+For an application that loads several files with the same policy, configure
+once and reuse the facade. Each call gets a fresh recursion stack and resource
+budget:
+
+    from yaml_include_merge import YamlConfigLoader
+
+    loader = YamlConfigLoader(search_paths=[Path("config/shared")])
+    development = loader.load_file("config/development.yaml")
+    production = loader.load_file("config/production.yaml")
+
+A stream using filesystem includes must have a `source_path` or explicit
+`search_paths`/`allowed_roots`; the current working directory is never an
+implicit root. A virtual source instead supplies a typed `MemorySource` and
+`MemoryRoot` to a `MemoryIncludeResolver`.
+
+## Supplying an include resolver
+
+The default resolver reads local files and keeps the root and symlink checks.
+To replace its lookup policy, pass an object implementing the small
+`IncludeResolver.resolve(IncludeRequest) -> ResolvedInclude` protocol:
+
+    loader = YamlConfigLoader(
+        include_resolver=my_local_resolver,
+        allowed_roots=[Path("config")],
+    )
+    config = loader.load_file("config/production.yaml")
+
+`ResolvedInclude` carries a stable source identity and a deferred binary-stream
+opener. The loader checks the identity against the configured roots before
+opening it, reads only within the byte budgets, and closes the stream on success
+and errors. It still parses with SafeLoader and applies the same overlay rules.
+The resolver is caller-supplied trusted code: it must honor the request roots
+and must not access the network. The built-in `MemoryIncludeResolver` is a
+small local fixture/data-map implementation; see
+`examples/in_memory_config.py` for a runnable example.
+
+`yaml.safe_load()` remains untouched and is still suitable for ordinary YAML
+that does not use this package's include feature. The package's own ordinary
+dispatch uses a SafeLoader subclass that additionally rejects duplicate keys.
 
 ## Include and overlay syntax
 
@@ -82,10 +118,10 @@ required.
 With the declared PyYAML dependency installed in the active environment:
 
     python examples/load_config.py
+    python examples/in_memory_config.py
     python -m unittest discover -s tests -v
 
-## Attribution
+## License status
 
-The supplied starter identifies Patrick Berry as the author of the original
-loader component. No license file or license grant was present in the supplied
-archive, so this repository does not add license terms.
+The supplied archive contained no license file or license grant. This
+repository does not add license terms.
