@@ -8,6 +8,7 @@ from .loader import (
     load_yaml_file,
     load_yaml_include,
 )
+from .limits import DEFAULT_INCLUDE_LIMITS, IncludeLimits
 from .resolver import (
     FileRoot,
     FileSource,
@@ -24,6 +25,8 @@ from .resolver import (
 
 __all__ = (
     "IncludeLoader",
+    "IncludeLimits",
+    "DEFAULT_INCLUDE_LIMITS",
     "YamlConfigLoader",
     "YamlIncludeError",
     "load_yaml_dispatch",

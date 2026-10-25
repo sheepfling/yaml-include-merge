@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from io import StringIO
 from pathlib import Path
 from typing import Any, Hashable, Iterable, TextIO
@@ -24,9 +24,12 @@ from .resolver import (
     validate_include_name,
 )
 from ._unset import UNSET, UnsetType
+from .limits import DEFAULT_INCLUDE_LIMITS, IncludeLimits
 
 __all__ = (
     "IncludeLoader",
+    "IncludeLimits",
+    "DEFAULT_INCLUDE_LIMITS",
     "YamlConfigLoader",
     "YamlDirective",
     "YamlIncludeError",
@@ -57,10 +60,7 @@ class YamlDirective:
 
 @dataclass(slots=True)
 class _IncludeBudget:
-    max_include_depth: int
-    max_include_files: int
-    max_file_bytes: int
-    max_total_include_bytes: int
+    limits: IncludeLimits
     include_files: int = 0
     include_bytes: int = 0
     current_depth: int = 0
@@ -409,39 +409,39 @@ class IncludeLoader(SafeLoader):
                 "include cycle detected: "
                 + " -> ".join(_include_source_label(item) for item in (*self.load_stack, include_source)),
             )
-        if self.budget.current_depth >= self.budget.max_include_depth:
+        if self.budget.current_depth >= self.budget.limits.max_include_depth:
             self._include_error(
                 node,
-                f"maximum include depth ({self.budget.max_include_depth}) exceeded",
+                f"maximum include depth ({self.budget.limits.max_include_depth}) exceeded",
             )
 
-        if self.budget.include_files + 1 > self.budget.max_include_files:
+        if self.budget.include_files + 1 > self.budget.limits.max_include_files:
             self._include_error(
                 node,
-                f"maximum include count ({self.budget.max_include_files}) exceeded",
+                f"maximum include count ({self.budget.limits.max_include_files}) exceeded",
             )
-        remaining_bytes = self.budget.max_total_include_bytes - self.budget.include_bytes
+        remaining_bytes = self.budget.limits.max_total_include_bytes - self.budget.include_bytes
         if remaining_bytes < 0:
             self._include_error(
                 node,
                 "maximum total included bytes "
-                f"({self.budget.max_total_include_bytes}) exceeded",
+                f"({self.budget.limits.max_total_include_bytes}) exceeded",
             )
-        read_limit = min(self.budget.max_file_bytes, remaining_bytes)
+        read_limit = min(self.budget.limits.max_file_bytes, remaining_bytes)
         try:
             with resolved.open_binary() as stream:
                 content = _read_bounded(stream, read_limit + 1)
-            if len(content) > self.budget.max_file_bytes:
+            if len(content) > self.budget.limits.max_file_bytes:
                 self._include_error(
                     node,
                     f"include source {_include_source_label(include_source)} exceeds the per-file size limit "
-                    f"({self.budget.max_file_bytes} bytes)",
+                    f"({self.budget.limits.max_file_bytes} bytes)",
                 )
             if len(content) > remaining_bytes:
                 self._include_error(
                     node,
                     "maximum total included bytes "
-                    f"({self.budget.max_total_include_bytes}) exceeded",
+                    f"({self.budget.limits.max_total_include_bytes}) exceeded",
                 )
             self.budget.include_files += 1
             self.budget.include_bytes += len(content)
@@ -466,6 +466,7 @@ class IncludeLoader(SafeLoader):
                         source=include_source,
                         allowed_roots=self.allowed_roots,
                         include_resolver=self.include_resolver,
+                        include_limits=self.budget.limits,
                         _budget=self.budget,
                     )
                 finally:
@@ -561,15 +562,40 @@ IncludeLoader.add_constructor("!include", IncludeLoader._construct_include)
 IncludeLoader.add_constructor("!delete", IncludeLoader._construct_delete)
 
 
-def _validate_limits(
-    max_include_depth: int,
-    max_include_files: int,
-    max_file_bytes: int,
-    max_total_include_bytes: int,
-) -> None:
-    limits = (max_include_depth, max_include_files, max_file_bytes, max_total_include_bytes)
-    if any(not isinstance(value, int) or value < 0 for value in limits):
-        raise ValueError("include limits must be non-negative integers")
+def _resolve_include_limits(
+    include_limits: IncludeLimits,
+    *,
+    max_include_depth: int | UnsetType = UNSET,
+    max_include_files: int | UnsetType = UNSET,
+    max_file_bytes: int | UnsetType = UNSET,
+    max_total_include_bytes: int | UnsetType = UNSET,
+) -> IncludeLimits:
+    """Use a profile as the base and let explicitly supplied legacy knobs win."""
+    if not isinstance(include_limits, IncludeLimits):
+        raise TypeError("include_limits must be an IncludeLimits instance")
+
+    def choose(value: int | UnsetType, default: int) -> int:
+        return default if isinstance(value, UnsetType) else value
+
+    if all(
+        isinstance(value, UnsetType)
+        for value in (
+            max_include_depth,
+            max_include_files,
+            max_file_bytes,
+            max_total_include_bytes,
+        )
+    ):
+        return include_limits
+    return IncludeLimits(
+        max_include_depth=choose(max_include_depth, include_limits.max_include_depth),
+        max_include_files=choose(max_include_files, include_limits.max_include_files),
+        max_file_bytes=choose(max_file_bytes, include_limits.max_file_bytes),
+        max_total_include_bytes=choose(
+            max_total_include_bytes,
+            include_limits.max_total_include_bytes,
+        ),
+    )
 
 
 def _canonical_source(source: IncludeSource) -> IncludeSource:
@@ -591,10 +617,11 @@ def load_yaml_dispatch(
     source: IncludeSource | None = None,
     allowed_roots: Iterable[str | Path | IncludeRoot] | None = None,
     include_resolver: IncludeResolver | None = None,
-    max_include_depth: int = 16,
-    max_include_files: int = 64,
-    max_file_bytes: int = 1_048_576,
-    max_total_include_bytes: int = 8_388_608,
+    include_limits: IncludeLimits = DEFAULT_INCLUDE_LIMITS,
+    max_include_depth: int | UnsetType = UNSET,
+    max_include_files: int | UnsetType = UNSET,
+    max_file_bytes: int | UnsetType = UNSET,
+    max_total_include_bytes: int | UnsetType = UNSET,
     _budget: _IncludeBudget | None = None,
 ) -> YamlType:
     """Load ordinary safe YAML or dispatch to bounded local includes.
@@ -636,7 +663,13 @@ def load_yaml_dispatch(
     if not roots:
         raise ValueError("include loading requires at least one allowed root")
 
-    _validate_limits(max_include_depth, max_include_files, max_file_bytes, max_total_include_bytes)
+    limits = _resolve_include_limits(
+        include_limits,
+        max_include_depth=max_include_depth,
+        max_include_files=max_include_files,
+        max_file_bytes=max_file_bytes,
+        max_total_include_bytes=max_total_include_bytes,
+    )
     stack: list[IncludeSource] = []
     for item in load_stack or ():
         if isinstance(item, (FileSource, MemorySource)):
@@ -650,10 +683,7 @@ def load_yaml_dispatch(
     if _budget is None:
         seeded_depth = len(stack) - (1 if source_ref is not None and source_ref in stack else 0)
         budget = _IncludeBudget(
-            max_include_depth=max_include_depth,
-            max_include_files=max_include_files,
-            max_file_bytes=max_file_bytes,
-            max_total_include_bytes=max_total_include_bytes,
+            limits=limits,
             current_depth=max(0, seeded_depth),
         )
     else:
@@ -689,10 +719,11 @@ def load_yaml_include(
     source: IncludeSource | None = None,
     allowed_roots: Iterable[str | Path | IncludeRoot] | None = None,
     include_resolver: IncludeResolver | None = None,
-    max_include_depth: int = 16,
-    max_include_files: int = 64,
-    max_file_bytes: int = 1_048_576,
-    max_total_include_bytes: int = 8_388_608,
+    include_limits: IncludeLimits = DEFAULT_INCLUDE_LIMITS,
+    max_include_depth: int | UnsetType = UNSET,
+    max_include_files: int | UnsetType = UNSET,
+    max_file_bytes: int | UnsetType = UNSET,
+    max_total_include_bytes: int | UnsetType = UNSET,
 ) -> YamlType:
     """Explicitly load YAML with includes and mapping overlays."""
     return load_yaml_dispatch(
@@ -705,6 +736,7 @@ def load_yaml_include(
         source=source,
         allowed_roots=allowed_roots,
         include_resolver=include_resolver,
+        include_limits=include_limits,
         max_include_depth=max_include_depth,
         max_include_files=max_include_files,
         max_file_bytes=max_file_bytes,
@@ -720,10 +752,11 @@ def load_yaml_file(
     allowed_roots: Iterable[str | Path | IncludeRoot] | None = None,
     include_resolver: IncludeResolver | None = None,
     recursive_dispatch: bool = True,
-    max_include_depth: int = 16,
-    max_include_files: int = 64,
-    max_file_bytes: int = 1_048_576,
-    max_total_include_bytes: int = 8_388_608,
+    include_limits: IncludeLimits = DEFAULT_INCLUDE_LIMITS,
+    max_include_depth: int | UnsetType = UNSET,
+    max_include_files: int | UnsetType = UNSET,
+    max_file_bytes: int | UnsetType = UNSET,
+    max_total_include_bytes: int | UnsetType = UNSET,
 ) -> YamlType:
     """Load a configuration path with the normal dispatch policy."""
     source_path = Path(path).resolve(strict=True)
@@ -738,6 +771,7 @@ def load_yaml_file(
             source_path=source_path,
             allowed_roots=allowed_roots,
             include_resolver=include_resolver,
+            include_limits=include_limits,
             max_include_depth=max_include_depth,
             max_include_files=max_include_files,
             max_file_bytes=max_file_bytes,
@@ -755,20 +789,66 @@ class YamlConfigLoader:
         search_paths: Iterable[str | Path | IncludeRoot] | None = None,
         allowed_roots: Iterable[str | Path | IncludeRoot] | None = None,
         recursive_dispatch: bool = True,
-        max_include_depth: int = 16,
-        max_include_files: int = 64,
-        max_file_bytes: int = 1_048_576,
-        max_total_include_bytes: int = 8_388_608,
+        include_limits: IncludeLimits = DEFAULT_INCLUDE_LIMITS,
+        max_include_depth: int | UnsetType = UNSET,
+        max_include_files: int | UnsetType = UNSET,
+        max_file_bytes: int | UnsetType = UNSET,
+        max_total_include_bytes: int | UnsetType = UNSET,
     ) -> None:
-        _validate_limits(max_include_depth, max_include_files, max_file_bytes, max_total_include_bytes)
+        limits = _resolve_include_limits(
+            include_limits,
+            max_include_depth=max_include_depth,
+            max_include_files=max_include_files,
+            max_file_bytes=max_file_bytes,
+            max_total_include_bytes=max_total_include_bytes,
+        )
         self.include_resolver = include_resolver
         self.search_paths = tuple(search_paths or ())
         self.allowed_roots = tuple(allowed_roots) if allowed_roots is not None else None
         self.recursive_dispatch = recursive_dispatch
-        self.max_include_depth = max_include_depth
-        self.max_include_files = max_include_files
-        self.max_file_bytes = max_file_bytes
-        self.max_total_include_bytes = max_total_include_bytes
+        self.include_limits = limits
+
+    @property
+    def include_limits(self) -> IncludeLimits:
+        return self._include_limits
+
+    @include_limits.setter
+    def include_limits(self, value: IncludeLimits) -> None:
+        if not isinstance(value, IncludeLimits):
+            raise TypeError("include_limits must be an IncludeLimits instance")
+        self._include_limits = value
+
+    @property
+    def max_include_depth(self) -> int:
+        return self.include_limits.max_include_depth
+
+    @max_include_depth.setter
+    def max_include_depth(self, value: int) -> None:
+        self.include_limits = replace(self.include_limits, max_include_depth=value)
+
+    @property
+    def max_include_files(self) -> int:
+        return self.include_limits.max_include_files
+
+    @max_include_files.setter
+    def max_include_files(self, value: int) -> None:
+        self.include_limits = replace(self.include_limits, max_include_files=value)
+
+    @property
+    def max_file_bytes(self) -> int:
+        return self.include_limits.max_file_bytes
+
+    @max_file_bytes.setter
+    def max_file_bytes(self, value: int) -> None:
+        self.include_limits = replace(self.include_limits, max_file_bytes=value)
+
+    @property
+    def max_total_include_bytes(self) -> int:
+        return self.include_limits.max_total_include_bytes
+
+    @max_total_include_bytes.setter
+    def max_total_include_bytes(self, value: int) -> None:
+        self.include_limits = replace(self.include_limits, max_total_include_bytes=value)
 
     def load_file(self, path: str | Path, *, loader_tag: str | None | UnsetType = UNSET) -> YamlType:
         return load_yaml_file(
@@ -778,10 +858,7 @@ class YamlConfigLoader:
             allowed_roots=self.allowed_roots,
             include_resolver=self.include_resolver,
             recursive_dispatch=self.recursive_dispatch,
-            max_include_depth=self.max_include_depth,
-            max_include_files=self.max_include_files,
-            max_file_bytes=self.max_file_bytes,
-            max_total_include_bytes=self.max_total_include_bytes,
+            include_limits=self.include_limits,
         )
 
     def load_stream(
@@ -801,10 +878,7 @@ class YamlConfigLoader:
             source=source,
             allowed_roots=self.allowed_roots,
             include_resolver=self.include_resolver,
-            max_include_depth=self.max_include_depth,
-            max_include_files=self.max_include_files,
-            max_file_bytes=self.max_file_bytes,
-            max_total_include_bytes=self.max_total_include_bytes,
+            include_limits=self.include_limits,
         )
 
     def load_include(
@@ -822,8 +896,5 @@ class YamlConfigLoader:
             source=source,
             allowed_roots=self.allowed_roots,
             include_resolver=self.include_resolver,
-            max_include_depth=self.max_include_depth,
-            max_include_files=self.max_include_files,
-            max_file_bytes=self.max_file_bytes,
-            max_total_include_bytes=self.max_total_include_bytes,
+            include_limits=self.include_limits,
         )

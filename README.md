@@ -35,9 +35,13 @@ For an application that loads several files with the same policy, configure
 once and reuse the facade. Each call gets a fresh recursion stack and resource
 budget:
 
-    from yaml_include_merge import YamlConfigLoader
+    from yaml_include_merge import IncludeLimits, YamlConfigLoader
 
-    loader = YamlConfigLoader(search_paths=[Path("config/shared")])
+    policy = IncludeLimits(max_include_depth=8, max_include_files=24)
+    loader = YamlConfigLoader(
+        search_paths=[Path("config/shared")],
+        include_limits=policy,
+    )
     development = loader.load_file("config/development.yaml")
     production = loader.load_file("config/production.yaml")
 
@@ -123,8 +127,18 @@ defined by the YAML specification or derived from measured application
 workloads. The defaults are 16 nested include levels, 64 included files, 1 MiB
 per included file, and 8 MiB total included content. They bound include data;
 the caller controls the top-level input stream. Tune them for the size and
-shape of the application's configuration using the `max_*` arguments on the
-loader facade or loading functions.
+shape of the application's configuration with an immutable `IncludeLimits`
+value. `DEFAULT_INCLUDE_LIMITS` is exported for libraries to inspect or use in
+module-level policy definitions without constructing a loader or parsing YAML.
+
+    from yaml_include_merge import DEFAULT_INCLUDE_LIMITS, IncludeLimits
+
+    package_defaults = DEFAULT_INCLUDE_LIMITS
+    service_policy = IncludeLimits(max_include_files=12)
+
+Existing `max_*` keyword arguments remain supported on the facade and loading
+functions. When an `include_limits` profile and an explicit `max_*` keyword are
+both supplied, that keyword replaces only the corresponding profile field.
 
 ## Run the example and tests
 
