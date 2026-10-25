@@ -12,6 +12,8 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Literal
 
+from scripts import repository_root
+
 PYTHON_PATHS = ("src", "examples", "scripts", "tests")
 Mode = Literal["all", "python", "tests", "quality"]
 
@@ -108,7 +110,7 @@ def _run(root: Path, command: tuple[str, ...], environment: dict[str, str]) -> i
     return result.returncode
 
 
-def main(argv: Sequence[str] = ()) -> int:
+def main(argv: Sequence[str] | None = None) -> int:
     """Run all checks locally, or one check group as selected by hosted CI."""
     parser = argparse.ArgumentParser(
         description="Run the same checks locally and in GitHub Actions.",
@@ -151,7 +153,7 @@ def main(argv: Sequence[str] = ()) -> int:
         print(error, file=sys.stderr)
         return 1
 
-    root = Path(__file__).resolve().parents[1]
+    root = repository_root()
     build_root = (root / "build" / "local-checks").resolve()
     if not build_root.is_relative_to(root):
         raise ValueError("local check output must stay inside the repository")
@@ -180,4 +182,4 @@ def main(argv: Sequence[str] = ()) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main(sys.argv[1:]))
+    raise SystemExit(main())

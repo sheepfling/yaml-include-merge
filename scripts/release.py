@@ -11,6 +11,8 @@ from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
 from pathlib import Path
 
+from scripts import repository_root
+
 
 class ReleaseError(RuntimeError):
     """Raised when a release tag, build, or distribution validation fails."""
@@ -74,10 +76,10 @@ def build_distributions(*, root: Path, output: Path) -> tuple[Path, ...]:
 def build_release(*, output: Path, tag: str | None = None) -> tuple[Path, ...]:
     """Verify the release tag, then build and validate its distributions."""
     verify_tag(tag)
-    return build_distributions(root=Path(__file__).resolve().parents[1], output=output)
+    return build_distributions(root=repository_root(), output=output)
 
 
-def main(argv: Sequence[str] = ()) -> int:
+def main(argv: Sequence[str] | None = None) -> int:
     """Run the provider-neutral release build command."""
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -93,4 +95,4 @@ def main(argv: Sequence[str] = ()) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main(sys.argv[1:]))
+    raise SystemExit(main())

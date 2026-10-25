@@ -6,12 +6,13 @@ import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+from scripts import repository_root
 from scripts.release import ReleaseError, build_distributions
 
 
 def main() -> int:
     """Build both distributions without leaving artifacts in the release directory."""
-    root = Path(__file__).resolve().parents[1]
+    root = repository_root()
     temporary_root = root / "build" / "checks"
     temporary_root.mkdir(parents=True, exist_ok=True)
     try:

@@ -70,10 +70,9 @@ def expected_simple_examples() -> dict[str, object]:
     ],
 )
 def test_simple_example_file_has_the_documented_result(
-    name: str, filename: str, expected_simple_examples: dict[str, object]
+    name: str, filename: str, examples_path: Path, expected_simple_examples: dict[str, object]
 ) -> None:
-    examples = Path(__file__).resolve().parents[1] / "examples"
-    assert load_yaml_file(examples / filename) == expected_simple_examples[name]
+    assert load_yaml_file(examples_path / filename) == expected_simple_examples[name]
 
 
 def test_simple_runner_loads_all_the_documented_examples(
@@ -82,10 +81,11 @@ def test_simple_runner_loads_all_the_documented_examples(
     assert load_examples() == expected_simple_examples
 
 
-def test_readme_and_examples_index_link_to_their_tests() -> None:
-    repo_root = Path(__file__).resolve().parents[1]
+def test_readme_and_examples_index_link_to_their_tests(
+    repo_root: Path, examples_path: Path
+) -> None:
     readme = (repo_root / "README.md").read_text(encoding="utf-8")
-    examples = (repo_root / "examples" / "README.md").read_text(encoding="utf-8")
+    examples = (examples_path / "README.md").read_text(encoding="utf-8")
     assert "[examples index](examples/README.md)" in readme
     assert "tests/test_examples.py" in readme
     assert "../tests/test_examples.py" in examples
@@ -93,10 +93,10 @@ def test_readme_and_examples_index_link_to_their_tests() -> None:
 
 
 def test_filesystem_example_resolves_all_layers_and_overrides(
+    examples_path: Path,
     expected_production_config: dict[str, object],
 ) -> None:
-    repo_root = Path(__file__).resolve().parents[1]
-    result = load_yaml_file(repo_root / "examples" / "production.yaml")
+    result = load_yaml_file(examples_path / "production.yaml")
     assert result == expected_production_config
 
 
@@ -125,17 +125,17 @@ def test_search_example_preserves_explicit_relative_files_and_local_overrides(
 
 
 def test_include_limit_example_distinguishes_bounded_from_unbounded(
+    examples_path: Path,
     expected_production_config: dict[str, object],
 ) -> None:
-    production = Path(__file__).resolve().parents[1] / "examples" / "production.yaml"
+    production = examples_path / "production.yaml"
     with pytest.raises(yaml.YAMLError, match="maximum include count"):
         load_yaml_file(production, max_include_files=1)
     assert load_unbounded_example() == expected_production_config
 
 
-def test_merge_modes_example_covers_sources_depth_and_replacement() -> None:
-    repo_root = Path(__file__).resolve().parents[1]
-    result = load_yaml_file(repo_root / "examples" / "merge_modes.yaml")
+def test_merge_modes_example_covers_sources_depth_and_replacement(examples_path: Path) -> None:
+    result = load_yaml_file(examples_path / "merge_modes.yaml")
     assert isinstance(result, dict)
     assert set(result) == {
         "defaults",

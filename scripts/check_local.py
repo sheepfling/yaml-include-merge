@@ -2,16 +2,15 @@
 
 from __future__ import annotations
 
-import sys
 from collections.abc import Sequence
 
 from scripts.ci import main as run_ci
 
 
-def main(argv: Sequence[str] = ()) -> int:
+def main(argv: Sequence[str] | None = None) -> int:
     """Forward arguments to the shared CI command coordinator."""
     return run_ci(argv)
 
 
 if __name__ == "__main__":
-    raise SystemExit(main(sys.argv[1:]))
+    raise SystemExit(main())

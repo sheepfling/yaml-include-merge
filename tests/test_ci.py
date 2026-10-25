@@ -15,11 +15,12 @@ import yaml
 from scripts import check_pyright, ci
 
 
-def test_hosted_matrix_covers_declared_versions_and_runs_python_checks() -> None:
-    root = Path(__file__).resolve().parents[1]
-    metadata = (root / "pyproject.toml").read_text(encoding="utf-8")
+def test_hosted_matrix_covers_declared_versions_and_runs_python_checks(repo_root: Path) -> None:
+    metadata = (repo_root / "pyproject.toml").read_text(encoding="utf-8")
     versions = re.findall(r'"Programming Language :: Python :: (3\.\d+)"', metadata)
-    workflow = cast(dict[str, Any], yaml.safe_load((root / ".github/workflows/ci.yml").read_text()))
+    workflow = cast(
+        dict[str, Any], yaml.safe_load((repo_root / ".github/workflows/ci.yml").read_text())
+    )
     job = workflow["jobs"]["test"]
     assert job["strategy"]["matrix"]["python-version"] == versions
     assert set(job["strategy"]["matrix"]["os"]) == {"ubuntu-latest", "windows-latest"}
@@ -38,6 +39,7 @@ def test_hosted_matrix_covers_declared_versions_and_runs_python_checks() -> None
     ("arguments", "has_python_checks", "has_tests", "has_repository_checks"),
     [
         ([], True, True, True),
+        (None, True, True, True),
         (["--python-only"], True, True, False),
         (["--tests-only"], False, True, False),
         (["--quality-only"], True, False, True),
@@ -45,13 +47,14 @@ def test_hosted_matrix_covers_declared_versions_and_runs_python_checks() -> None
 )
 def test_coordinator_modes_run_full_suites_with_the_active_interpreter(
     monkeypatch: pytest.MonkeyPatch,
-    arguments: list[str],
+    repo_root: Path,
+    arguments: list[str] | None,
     has_python_checks: bool,
     has_tests: bool,
     has_repository_checks: bool,
 ) -> None:
+    monkeypatch.setattr(sys, "argv", ["ci"])
     commands: list[tuple[str, ...]] = []
-    root = Path(__file__).resolve().parents[1]
 
     def find_rumdl() -> str:
         assert has_repository_checks, "Python-only runs must not require Markdown tooling"
@@ -60,8 +63,8 @@ def test_coordinator_modes_run_full_suites_with_the_active_interpreter(
     def run(
         command: Sequence[str], *, cwd: Path, env: dict[str, str], check: bool
     ) -> subprocess.CompletedProcess[str]:
-        assert cwd == root
-        assert Path(env["TEMP"]).is_relative_to(root / "build" / "local-checks")
+        assert cwd == repo_root
+        assert Path(env["TEMP"]).is_relative_to(repo_root / "build" / "local-checks")
         assert check is False
         commands.append(tuple(command))
         return subprocess.CompletedProcess(command, 0)

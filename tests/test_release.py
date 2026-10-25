@@ -12,6 +12,25 @@ import pytest
 from scripts import release
 
 
+@pytest.mark.parametrize("process_arguments", [True, False])
+def test_release_cli_accepts_process_or_explicit_arguments(
+    test_path: Path, monkeypatch: pytest.MonkeyPatch, process_arguments: bool
+) -> None:
+    arguments = ["build", "--output", str(test_path)]
+    monkeypatch.setattr(
+        sys, "argv", ["release", *arguments] if process_arguments else ["unrelated"]
+    )
+    outputs: list[Path] = []
+
+    def build(*, output: Path) -> tuple[Path, ...]:
+        outputs.append(output)
+        return ()
+
+    monkeypatch.setattr(release, "build_release", build)
+    assert release.main(None if process_arguments else arguments) == 0
+    assert outputs == [test_path]
+
+
 def test_release_tag_must_match_the_installed_version(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(release, "project_version", lambda: "1.2.3")
     monkeypatch.delenv("RELEASE_TAG", raising=False)
