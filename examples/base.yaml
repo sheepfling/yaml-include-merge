@@ -11,3 +11,5 @@ service:
 logging:
   level: info
   format: json
+backend:
+  mode: pooled

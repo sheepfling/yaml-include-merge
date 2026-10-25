@@ -3,5 +3,19 @@ __pycache__/
 *.egg-info/
 .venv/
 .pytest_cache/
+yaml-compose-test-*/
+.ruff_cache/
+.rumdl_cache/
+.pre-commit-cache/
+.pip-cache/
+.mypy_cache/
+.pyright/
+.coverage
+htmlcov/
+# Keep machine-specific IDE settings local; shared Python tooling lives in pyproject.toml.
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
 build/
 dist/

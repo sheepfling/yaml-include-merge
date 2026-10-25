@@ -1,0 +1,2 @@
+host: db.example.test
+port: 5432

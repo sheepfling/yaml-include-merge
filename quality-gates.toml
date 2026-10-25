@@ -1,0 +1,111 @@
+schema_version = 1
+
+[files]
+include = [
+  "src/**/*.py", "tests/**/*.py", "examples/**/*.py", "scripts/**/*.py",
+  "README.md", "docs/**/*.md", "*.toml",
+]
+exclude = []
+
+[checks.comment_markers]
+extensions = [".py", ".toml"]
+markers = ["TODO", "FIXME", "HACK", "XXX"]
+
+[checks.path_discovery]
+extensions = [".py"]
+# Test fixtures may locate the checkout or use a temporary working directory.
+exclude = ["tests/**"]
+inspection_exclude = ["tests/**"]
+
+[checks.python_style]
+extensions = [".py"]
+opaque_boundary_marker_prefix = "# opaque-boundary: "
+opaque_boundary_min_reason_chars = 12
+forbidden_main_imports = ["main"]
+opaque_boundary_paths = [
+  "src/yaml_compose/loader.py", "src/yaml_compose/_yaml_loader.py",
+  "src/yaml_compose/_overlays.py",
+  "examples/in_memory_config.py",
+]
+
+[checks.runtime_types]
+extensions = [".py"]
+# These modules validate untrusted values at runtime or inspect dynamic YAML.
+exclude = [
+  "tests/**", "examples/**", "src/yaml_compose/loader.py",
+  "src/yaml_compose/_yaml_loader.py",
+  "src/yaml_compose/_overlays.py",
+  "src/yaml_compose/resolver.py", "src/yaml_compose/limits.py",
+  "src/yaml_compose/_search.py",
+]
+
+[checks.file_size]
+code_extensions = [".py"]
+code_limit = 1000
+hard_limit = 2000
+initializer_name = "__init__.py"
+initializer_limit = 150
+
+[checks.line_length]
+
+[checks.line_length.limits]
+".py" = 100
+".md" = 100
+
+[checks.json_structure]
+extensions = [".py"]
+exclude = ["tests/**"]
+
+[checks.output_escaping]
+extensions = [".py"]
+
+[orchestration]
+default_profile = "check"
+
+[[orchestration.steps]]
+kind = "rule"
+name = "Temporary markers"
+rule = "comment-markers"
+
+[[orchestration.steps]]
+kind = "rule"
+name = "Path discovery"
+rule = "path-discovery"
+
+[[orchestration.steps]]
+kind = "rule"
+name = "Python style"
+rule = "python-style"
+
+[[orchestration.steps]]
+kind = "rule"
+name = "Runtime type narrowing"
+rule = "runtime-types"
+
+[[orchestration.steps]]
+kind = "rule"
+name = "File size"
+rule = "file-size"
+
+[[orchestration.steps]]
+kind = "rule"
+name = "Line length"
+rule = "line-length"
+
+[[orchestration.steps]]
+kind = "rule"
+name = "JSON structure"
+rule = "json-structure"
+
+[[orchestration.steps]]
+kind = "rule"
+name = "Output escaping"
+rule = "output-escaping"
+
+[[orchestration.profiles]]
+name = "check"
+steps = [
+  "Temporary markers", "Path discovery", "Python style",
+  "Runtime type narrowing", "File size", "Line length",
+  "JSON structure", "Output escaping",
+]

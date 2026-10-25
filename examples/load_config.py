@@ -1,22 +1,24 @@
-"""Executable example for the include and overlay loader."""
+"""Load the runnable YAML examples used in the top-level README."""
 
-from pathlib import Path
 import json
+from pathlib import Path
 
-from yaml_include_merge import load_yaml_file
+from yaml_compose import load_yaml_file
+
+
+def load_examples() -> dict[str, object]:
+    """Return each simple example's composed value for display or verification."""
+    examples = Path(__file__).parent
+    return {
+        "quickstart": load_yaml_file(examples / "quickstart" / "production.yaml"),
+        "include_value": load_yaml_file(examples / "include_value.yaml"),
+        "shallow_merge": load_yaml_file(examples / "shallow_merge.yaml"),
+        "deep_merge": load_yaml_file(examples / "deep_merge.yaml"),
+        "merge_precedence": load_yaml_file(examples / "merge_precedence.yaml"),
+        "spread_sources": load_yaml_file(examples / "spread_sources.yaml"),
+        "replace_mapping": load_yaml_file(examples / "replace_mapping.yaml"),
+    }
 
 
 if __name__ == "__main__":
-    config = load_yaml_file(Path(__file__).with_name("production.yaml"))
-    assert config == {
-        "service": {
-            "host": "api.us.example.test",
-            "port": 8081,
-            "labels": ["production"],
-            "clearable": [],
-            "token": None,
-            "nested": {"retries": 3, "timeout_seconds": 45},
-        },
-        "logging": {"level": "warning", "format": "json"},
-    }
-    print(json.dumps(config, indent=2, sort_keys=True))
+    print(json.dumps(load_examples(), indent=2, sort_keys=True))

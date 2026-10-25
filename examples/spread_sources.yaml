@@ -1,0 +1,8 @@
+%LOADER YamlCompose
+---
+shared: &shared [alpha, beta]
+items:
+  - before
+  - !spread [*shared]
+  - !spread [!include ./extra-items.yaml]
+  - after

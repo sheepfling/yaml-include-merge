@@ -1,0 +1,11 @@
+%LOADER YamlCompose
+---
+<<<: !include ./base.yaml
+service:
+  host: api.example.test
+  labels: [production]
+  token: !delete
+steps:
+  - prepare
+  - !spread [!include ./extra_steps.yaml]
+  - deploy

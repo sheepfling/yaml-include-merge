@@ -1,0 +1,2 @@
+service: {host: localhost, port: 8080}
+enabled: true

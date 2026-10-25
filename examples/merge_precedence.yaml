@@ -1,0 +1,7 @@
+%LOADER YamlCompose
+---
+first: &first {winner: first, service: {host: localhost, port: 8080}}
+second: &second {winner: second, service: {port: 9000, timeout: 30}}
+merged:
+  service: {port: 9090}
+  <<<: [*first, *second]
