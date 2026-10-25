@@ -24,6 +24,13 @@ class IncludeLimits:
     use of that resource; ``None`` leaves that resource unbounded. Booleans,
     negative numbers, and other values raise ``ValueError``.
 
+    The generous bounded defaults allow 32 include levels, 1,024 file reads,
+    8 MiB per file, and 64 MiB in total. These are package policy choices for
+    configuration composition, not YAML specification limits. File and byte
+    counts include repeated reads of the same source, including reads for
+    spread and replacement values. They bound input content, not the size of
+    the constructed Python object graph.
+
     Attributes:
         max_include_depth: Maximum nested ``!include`` levels, or ``None``.
         max_include_files: Maximum ``!include`` operations per top-level load,
@@ -34,10 +41,10 @@ class IncludeLimits:
 
     """
 
-    max_include_depth: int | None = 16
-    max_include_files: int | None = 64
-    max_file_bytes: int | None = 1_048_576
-    max_total_include_bytes: int | None = 8_388_608
+    max_include_depth: int | None = 32
+    max_include_files: int | None = 1024
+    max_file_bytes: int | None = 8_388_608
+    max_total_include_bytes: int | None = 67_108_864
 
     def __post_init__(self) -> None:
         """Reject invalid bounds before a limits object can be used."""

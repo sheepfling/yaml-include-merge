@@ -541,10 +541,10 @@ class TestLoader:
             load_yaml_file(config, max_include_files=0)
 
     def test_library_include_limits_are_inspectable_and_configurable(self) -> None:
-        assert DEFAULT_INCLUDE_LIMITS.max_include_depth == 16
-        assert DEFAULT_INCLUDE_LIMITS.max_include_files == 64
-        assert DEFAULT_INCLUDE_LIMITS.max_file_bytes == 1048576
-        assert DEFAULT_INCLUDE_LIMITS.max_total_include_bytes == 8388608
+        assert DEFAULT_INCLUDE_LIMITS.max_include_depth == 32
+        assert DEFAULT_INCLUDE_LIMITS.max_include_files == 1024
+        assert DEFAULT_INCLUDE_LIMITS.max_file_bytes == 8388608
+        assert DEFAULT_INCLUDE_LIMITS.max_total_include_bytes == 67108864
 
         self.write("base.yaml", "value: loaded\n")
         config = self.write("main.yaml", "%LOADER YamlCompose\n---\n<<<: !include base.yaml\n")

@@ -23,6 +23,8 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
+test = ["pytest>=8.3", "pytest-cov>=6.0"]
+lint = ["pyright>=1.1.414", "ruff>=0.9", "typing_extensions>=4.16"]
 dev = [
     "build>=1.2",
     "mdrepo>=0.0.1",

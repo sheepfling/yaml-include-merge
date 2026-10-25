@@ -18,6 +18,13 @@ template language.
 
 The syntax stays close to YAML. The results are ordinary Python values.
 
+These operators are `yaml-compose` semantics, not YAML-standard operations. YAML has
+syntax for application-specific tags, but it does not define what these tags or `<<<`
+mean. The `%LOADER YamlCompose` header is also a package-specific selector written
+with directive syntax; YAML does not define private directives. `yaml-compose`
+recognizes and removes this header before parsing the document with PyYAML. Other
+YAML tools will not apply these composition rules.
+
 ## See it in action
 
 Suppose you start with a shared configuration:
@@ -74,8 +81,8 @@ from yaml_compose import load_yaml_file
 config = load_yaml_file("production.yaml")
 ```
 
-The `%LOADER YamlCompose` directive opts the document into composition. Ordinary YAML files
-can still be loaded without modification.
+The `%LOADER YamlCompose` package header opts the document into composition. Ordinary
+YAML files can still be loaded without modification.
 
 ## Composition that reads like YAML
 
@@ -85,10 +92,12 @@ anchors, and aliases.
 
 ### Merge shallowly or recursively
 
-YAML already supports the `<<` merge key. It merges mappings at one level, allowing local
-keys to override inherited ones.
+PyYAML supports `<<` as a shallow merge key, following the YAML 1.1-era merge-key
+working draft. YAML 1.2 removed `<<` from its core schema, so treat this as PyYAML
+compatibility behavior rather than portable YAML 1.2 syntax. In this behavior, local
+keys override inherited keys.
 
-`yaml-compose` introduces its recursive counterpart, `<<<`.
+`yaml-compose` introduces a package-specific recursive counterpart, `<<<`.
 
 ```yaml
 %LOADER YamlCompose
@@ -252,7 +261,7 @@ takes precedence over both.
 An include should behave like a reference to another file—not like a path whose meaning
 depends on where Python happened to be started.
 
-`yaml-compose` resolves include paths **relative to the YAML file containing the include**.
+By default, a bare include name resolves **relative to the YAML file containing the include**.
 
 Consider:
 
@@ -308,13 +317,13 @@ development = loader.load_file("config/development.yaml")
 production = loader.load_file("config/production.yaml")
 ```
 
-Resolution follows a consistent order:
-
-1. Try the directory of the YAML file containing the include.
-2. If nothing is found there, try configured search paths in order.
-3. Require resolved files to remain within the allowed roots.
-
-The process's current working directory is never used as an implicit fallback.
+By default, lookup tries the directory of the YAML file containing the include, then
+configured search paths in order. Set `include_search` to `search-first`, `local-only`,
+or `search-only` to change that policy for bare names (`local-first` is the default).
+Explicit `./` and `../` paths always refer to the including file and do not fall back
+to search paths; an absolute path names one exact file. Every resolved file must stay
+within an allowed root, including after symlinks are resolved. The process's current
+working directory is never an implicit fallback.
 
 By default, the top-level file's directory and configured search paths define the allowed
 roots. You can supply `allowed_roots` explicitly when a configuration needs access to a
@@ -385,8 +394,8 @@ A few boundaries are worth knowing:
   document. Included files use composition by default; `recursive_dispatch=False` changes
   how nested files are parsed.
 - **Includes are bounded.** Configurable limits constrain include depth, file count, file
-  size, and total included bytes. Defaults are 16 levels, 64 included files, 1 MiB per
-  file, and 8 MiB total.
+  size, and total included bytes. Defaults are 32 levels, 1,024 file reads, 8 MiB per
+  file, and 64 MiB total. Each bound accepts `None` to leave that resource unlimited.
 - **Errors retain context.** YAML errors preserve source locations, while include failures
   identify the reference and the failed path or resolution policy.
 - **Output is data, not an editable document tree.** Comments, formatting, and per-key
@@ -411,6 +420,11 @@ change the process-wide defaults for new loads; each loader captures its limits 
 created. Existing `max_*` arguments override only their corresponding profile fields, and
 an explicit `None` leaves that bound unlimited.
 
+File and byte budgets count repeated includes of the same file, including includes used
+by `!spread` or `!replace`. Budgets reset for each top-level load. The top-level input
+does not count toward these include budgets. They bound input bytes, not the size of
+the resulting Python objects. These defaults are package policy, not YAML requirements.
+
 ## Examples
 
 The repository includes runnable examples covering the main composition behaviors:
@@ -425,7 +439,7 @@ The [examples index](examples/README.md) links the runnable files to their expec
 
 ## Development
 
-Install development dependencies once:
+Install development dependencies with Python 3.11 or newer (`mdrepo` requires 3.11+):
 
 ```shell
 python -m pip install -e ".[dev]"
@@ -437,11 +451,25 @@ Run the full CI check set locally:
 python -m scripts.ci
 ```
 
-GitHub Actions uses the same command coordinator: its test matrix runs
-`python -m scripts.ci --tests-only`, and its quality job runs
-`python -m scripts.ci --quality-only`. A local run covers both groups with the active
-Python interpreter; CI also checks tests across Windows, Linux, and Python 3.10 through
-3.15. Add `--fix` to apply safe Ruff, rumdl, and mdrepo fixes before checking.
+GitHub Actions uses the same command coordinator. Every Python 3.10–3.15 job on Windows
+and Linux runs `python -m scripts.ci --python-only`: compilation, Ruff lint and formatting,
+strict Pyright checks targeting that Python version, and the complete pytest suite with
+branch coverage (at least 80%). Test discovery includes both the simple examples and the
+nested composition, search policy, overlay, and spread tests.
+
+A separate Python 3.14 job runs `python -m scripts.ci --quality-only` for Markdown lint,
+repository policy, pre-commit hooks, package builds, archive contents, and distribution
+metadata, as well as Python quality checks. A full local run covers both groups with the
+active interpreter. Add `--fix` to apply safe Ruff, rumdl, and mdrepo fixes before checking.
+
+To run the Python checks alone, including on Python 3.10, install the smaller extras:
+
+```shell
+python -m pip install -e ".[test,lint]"
+python -m scripts.ci --python-only
+```
+
+Use `python -m scripts.ci --tests-only` to run just the complete test suite and coverage.
 
 The examples can also be run directly:
 

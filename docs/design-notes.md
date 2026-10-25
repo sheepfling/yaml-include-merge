@@ -23,7 +23,7 @@ merging therefore need separate names and documented semantics.
 The priority rule for `<<` comes from the [YAML 1.1 merge-key working draft](https://yaml.org/type/merge.html):
 earlier maps in a merge sequence win, and keys already in the current mapping
 take precedence. YAML 1.2 removed the special `<<` key, but PyYAML retains it
-in [`SafeConstructor.flatten_mapping`](https://github.com/yaml/pyyaml/blob/main/lib/yaml/constructor.py#L1989-L2066).
+in [`SafeConstructor.flatten_mapping`](https://github.com/yaml/pyyaml/blob/main/lib/yaml/constructor.py).
 This package keeps that shallow behavior and gives `<<<` the same precedence
 while recursively combining mapping values. Recursion is the extension; the
 priority rule stays familiar.
@@ -90,7 +90,8 @@ own adapter around PyYAML.
 
 ## Semantics implemented here
 
-- A file opts into the adapter with the package header %LOADER YamlCompose, or
+- A file opts into the adapter with the package-specific `%LOADER YamlCompose`
+  header (not a standardized YAML directive), or
   a caller explicitly selects load_yaml_compose. An unknown `%LOADER` value
   is an error; explicit `loader_tag=None` selects ordinary YAML.
 - Include names without an explicit relative prefix use `include_search`:

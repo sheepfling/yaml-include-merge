@@ -12,9 +12,8 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Literal
 
-ROOT = Path(__file__).resolve().parents[1]
 PYTHON_PATHS = ("src", "examples", "scripts", "tests")
-Mode = Literal["all", "tests", "quality"]
+Mode = Literal["all", "python", "tests", "quality"]
 
 
 def _rumdl_command() -> str:
@@ -44,53 +43,12 @@ def _commands(
     fix: bool,
 ) -> tuple[tuple[str, tuple[str, ...]], ...]:
     """Return the ordered CI commands selected for this run."""
-    quality: list[tuple[str, tuple[str, ...]]] = []
-    if fix:
-        quality.extend(
-            [
-                ("Ruff fixes", (python, "-m", "ruff", "check", "--fix", *PYTHON_PATHS)),
-                ("Ruff format", (python, "-m", "ruff", "format", *PYTHON_PATHS)),
-                ("Markdown fixes", (rumdl, "check", "--fix", ".")),
-                ("Markdown repository fixes", (python, "-m", "mdrepo", "fix", ".")),
-            ]
-        )
-    quality.extend(
-        [
-            ("compile", (python, "-m", "compileall", "-q", *PYTHON_PATHS)),
-            ("Ruff lint", (python, "-m", "ruff", "check", *PYTHON_PATHS)),
-            (
-                "Ruff format check",
-                (python, "-m", "ruff", "format", "--check", *PYTHON_PATHS),
-            ),
-            ("Pyright", (python, "-m", "scripts.check_pyright")),
-            ("rumdl", (rumdl, "check", ".")),
-            ("mdrepo", (python, "-m", "mdrepo", "check", ".", "--format", "github")),
-            (
-                "pre-commit configuration",
-                (python, "-m", "pre_commit", "validate-config", ".pre-commit-config.yaml"),
-            ),
-            ("pre-commit hooks", (python, "-m", "pre_commit", "run", "--all-files")),
-            (
-                "package build",
-                (
-                    python,
-                    "-m",
-                    "build",
-                    "--no-isolation",
-                    "--quiet",
-                    "--sdist",
-                    "--wheel",
-                    "--outdir",
-                    str(dist),
-                ),
-            ),
-            (
-                "package contents",
-                (python, "-m", "scripts.check_artifacts", "--dist-dir", str(dist)),
-            ),
-            ("distribution metadata", (python, "-m", "twine", "check")),
-        ]
-    )
+    python_checks = [
+        ("compile", (python, "-m", "compileall", "-q", *PYTHON_PATHS)),
+        ("Ruff lint", (python, "-m", "ruff", "check", *PYTHON_PATHS)),
+        ("Ruff format check", (python, "-m", "ruff", "format", "--check", *PYTHON_PATHS)),
+        ("Pyright", (python, "-m", "scripts.check_pyright")),
+    ]
     tests = [
         (
             "pytest coverage",
@@ -104,19 +62,63 @@ def _commands(
             ),
         )
     ]
-
+    repository_checks = [
+        ("rumdl", (rumdl, "check", ".")),
+        ("mdrepo", (python, "-m", "mdrepo", "check", ".", "--format", "github")),
+        (
+            "pre-commit configuration",
+            (python, "-m", "pre_commit", "validate-config", ".pre-commit-config.yaml"),
+        ),
+        ("pre-commit hooks", (python, "-m", "pre_commit", "run", "--all-files")),
+        (
+            "package build",
+            (
+                python,
+                "-m",
+                "build",
+                "--no-isolation",
+                "--quiet",
+                "--sdist",
+                "--wheel",
+                "--outdir",
+                str(dist),
+            ),
+        ),
+        (
+            "package contents",
+            (python, "-m", "scripts.check_artifacts", "--dist-dir", str(dist)),
+        ),
+        ("distribution metadata", (python, "-m", "twine", "check")),
+    ]
+    fixes: list[tuple[str, tuple[str, ...]]] = (
+        [
+            ("Ruff fixes", (python, "-m", "ruff", "check", "--fix", *PYTHON_PATHS)),
+            ("Ruff format", (python, "-m", "ruff", "format", *PYTHON_PATHS)),
+        ]
+        if fix
+        else []
+    )
+    if fix and mode in ("all", "quality"):
+        fixes.extend(
+            [
+                ("Markdown fixes", (rumdl, "check", "--fix", ".")),
+                ("Markdown repository fixes", (python, "-m", "mdrepo", "fix", ".")),
+            ]
+        )
     if mode == "tests":
         return tuple(tests)
+    if mode == "python":
+        return tuple((*fixes, *python_checks, *tests))
     if mode == "quality":
-        return tuple(quality)
-    return tuple((*quality[:4], *tests, *quality[4:]))
+        return tuple((*fixes, *python_checks, *repository_checks))
+    return tuple((*fixes, *python_checks, *tests, *repository_checks))
 
 
-def _run(command: tuple[str, ...], environment: dict[str, str]) -> int:
+def _run(root: Path, command: tuple[str, ...], environment: dict[str, str]) -> int:
     """Run one command from the repository root and return its exit code."""
     print("$", " ".join(command), flush=True)
     try:
-        result = subprocess.run(command, cwd=ROOT, env=environment, check=False)
+        result = subprocess.run(command, cwd=root, env=environment, check=False)
     except OSError as error:
         print(f"CI command could not start: {error}", file=sys.stderr)
         return 1
@@ -135,6 +137,11 @@ def main(argv: Sequence[str] = ()) -> int:
         ),
     )
     selected = parser.add_mutually_exclusive_group()
+    selected.add_argument(
+        "--python-only",
+        action="store_true",
+        help="run tests, coverage, compilation, Ruff, and type checks for this Python version",
+    )
     selected.add_argument("--tests-only", action="store_true", help="run only tests and coverage")
     selected.add_argument("--quality-only", action="store_true", help="run only quality checks")
     parser.add_argument(
@@ -146,17 +153,26 @@ def main(argv: Sequence[str] = ()) -> int:
     if args.fix and args.tests_only:
         parser.error("--fix cannot be combined with --tests-only")
 
-    mode: Mode = "tests" if args.tests_only else "quality" if args.quality_only else "all"
+    mode: Mode
+    if args.tests_only:
+        mode = "tests"
+    elif args.python_only:
+        mode = "python"
+    elif args.quality_only:
+        mode = "quality"
+    else:
+        mode = "all"
     python = sys.executable
     command_path = os.pathsep.join((str(Path(python).parent), os.environ.get("PATH", "")))
     try:
-        rumdl = _rumdl_command() if mode != "tests" else "rumdl"
+        rumdl = _rumdl_command() if mode in ("all", "quality") else "rumdl"
     except FileNotFoundError as error:
         print(error, file=sys.stderr)
         return 1
 
-    build_root = (ROOT / "build" / "local-checks").resolve()
-    if not build_root.is_relative_to(ROOT):
+    root = Path(__file__).resolve().parents[1]
+    build_root = (root / "build" / "local-checks").resolve()
+    if not build_root.is_relative_to(root):
         raise ValueError("local check output must stay inside the repository")
     build_root.mkdir(parents=True, exist_ok=True)
 
@@ -166,7 +182,7 @@ def main(argv: Sequence[str] = ()) -> int:
         environment.update(
             {
                 "PATH": command_path,
-                "PRE_COMMIT_HOME": str(ROOT / ".pre-commit-cache"),
+                "PRE_COMMIT_HOME": str(root / ".pre-commit-cache"),
                 "TEMP": temporary,
                 "TMP": temporary,
                 "TMPDIR": temporary,
@@ -176,7 +192,7 @@ def main(argv: Sequence[str] = ()) -> int:
         for name, command in commands:
             if name == "distribution metadata":
                 command = (*command, *(str(path) for path in sorted(dist.iterdir())))
-            result = _run(command, environment)
+            result = _run(root, command, environment)
             if result:
                 print(f"Failed check: {name}", file=sys.stderr)
                 return result
