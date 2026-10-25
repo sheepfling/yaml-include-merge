@@ -1,0 +1,6 @@
+service:
+  host: localhost
+  port: 8080
+  labels: [internal]
+  token: development-token
+steps: [legacy]

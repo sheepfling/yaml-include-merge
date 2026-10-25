@@ -1,0 +1,10 @@
+include .gitignore
+include .pre-commit-config.yaml
+include quality-gates.toml
+include LICENSE
+include CHANGELOG.md
+recursive-include .github *.yml
+recursive-include docs *.md
+prune examples
+recursive-include scripts *.py
+recursive-include tests *.py

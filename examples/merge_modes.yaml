@@ -1,0 +1,31 @@
+%LOADER YamlCompose
+---
+defaults: &defaults
+  service: {host: localhost, port: 8080}
+  enabled: true
+replacement: &replacement {port: 9000}
+
+shallow_anchor: {<<: *defaults, service: {port: 8081}}
+shallow_file: {<<: !include merge_defaults.yaml, service: {port: 8081}}
+deep_anchor: {<<<: *defaults, service: {port: 8081}}
+deep_file: {<<<: !include merge_defaults.yaml, service: {port: 8081}}
+
+shallow_sources:
+  <<: [*defaults, !include merge_later.yaml]
+  service: {port: 8082}
+deep_sources:
+  <<<: [*defaults, !include merge_later.yaml]
+  service: {port: 8082}
+
+replace_inline: {<<<: *defaults, service: !replace {port: 9000}}
+replace_anchor: {<<<: *defaults, service: !replace [*replacement]}
+replace_file: {<<<: *defaults, service: !replace [!include merge_replacement.yaml]}
+clear_mapping: {<<<: *defaults, service: !replace {}}
+
+shallow_delete:
+  <<: *defaults
+  enabled: !delete
+deep_delete:
+  <<<: *defaults
+  service:
+    port: !delete

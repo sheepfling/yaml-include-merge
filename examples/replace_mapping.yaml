@@ -1,0 +1,4 @@
+%LOADER YamlCompose
+---
+<<<: !include ./merge_defaults.yaml
+service: !replace {port: 9000}

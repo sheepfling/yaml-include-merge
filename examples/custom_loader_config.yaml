@@ -1,0 +1,3 @@
+%LOADER YamlCompose
+---
+profile: !include custom_loader_profile.yaml

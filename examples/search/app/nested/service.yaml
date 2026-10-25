@@ -1,0 +1,7 @@
+<<<: !include defaults.yaml
+port: 9090
+steps:
+  - prepare
+  - !spread [!include steps.yaml]
+  - package
+pinned: !include ./identity.yaml

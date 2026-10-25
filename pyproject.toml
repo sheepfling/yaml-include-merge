@@ -1,0 +1,117 @@
+[build-system]
+requires = ["setuptools>=80", "setuptools-scm>=9.2"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "yaml-compose"
+dynamic = ["version"]
+description = "Safe YAML composition with file includes, mapping overlays, and list spreads"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+maintainers = [{name = "sheepfling"}]
+requires-python = ">=3.10"
+dependencies = ["PyYAML>=6.0,<7"]
+keywords = ["yaml", "include", "configuration", "merge"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
+]
+
+[project.urls]
+Source = "https://github.com/sheepfling/yaml-include-merge"
+Issues = "https://github.com/sheepfling/yaml-include-merge/issues"
+Documentation = "https://github.com/sheepfling/yaml-include-merge/blob/main/README.md"
+Changelog = "https://github.com/sheepfling/yaml-include-merge/blob/main/CHANGELOG.md"
+
+[project.optional-dependencies]
+test = ["pytest>=8.3", "pytest-cov>=6.0"]
+lint = ["pyright>=1.1.414", "ruff>=0.9", "typing_extensions>=4.16"]
+dev = [
+    "build>=1.2",
+    "mdrepo>=0.0.1",
+    "pre-commit>=4.0",
+    "pyright>=1.1.414",
+    "pytest>=8.3",
+    "pytest-cov>=6.0",
+    "ruff>=0.9",
+    "rumdl>=0.2.49,<0.3",
+    "setuptools-scm>=9.2",
+    "twine>=6.1",
+    "typing_extensions>=4.16",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+yaml_compose = ["py.typed"]
+
+[tool.setuptools_scm]
+
+[tool.pytest.ini_options]
+addopts = ["-ra", "--strict-config", "--strict-markers"]
+pythonpath = [".", "src"]
+testpaths = ["tests"]
+
+[tool.coverage.run]
+branch = true
+source = ["yaml_compose"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+fail_under = 80
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+    "B", "D", "E", "F", "I", "RUF", "SIM", "UP",
+]
+ignore = ["D203", "D213"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["D"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["yaml_compose"]
+
+[tool.pyright]
+include = ["src", "examples", "scripts", "tests"]
+pythonVersion = "3.10"
+typeCheckingMode = "strict"
+
+[tool.rumdl]
+line-length = 100
+extend-enable = ["MD029", "MD060"]
+
+[tool.rumdl.MD029]
+style = "ordered"
+
+[tool.rumdl.MD060]
+style = "aligned"
+
+[tool.rumdl.MD013]
+line-length = 100
+
+[tool.mdrepo]
+include = ["*.md", "**/*.md"]
+
+[tool.mdrepo.links]
+check-missing-targets = false
+check-case = true
+
+[tool.mdrepo.orphans]
+enabled = true
+roots = ["README.md"]

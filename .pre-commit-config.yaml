@@ -1,0 +1,27 @@
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: Ruff lint
+        entry: python -m ruff check src examples scripts tests
+        language: system
+        pass_filenames: false
+        always_run: true
+      - id: ruff-format
+        name: Ruff format
+        entry: python -m ruff format --check src examples scripts tests
+        language: system
+        pass_filenames: false
+        always_run: true
+      - id: rumdl
+        name: Markdown lint
+        entry: rumdl check .
+        language: system
+        pass_filenames: false
+        always_run: true
+      - id: mdrepo
+        name: Markdown repository policy
+        entry: python -m mdrepo check .
+        language: system
+        pass_filenames: false
+        always_run: true

@@ -1,0 +1,3 @@
+host: local.example.test
+port: 8080
+limits: {requests: 100, burst: 20}

@@ -1,0 +1,5 @@
+%LOADER YamlCompose
+---
+<<<: !include ./merge_defaults.yaml
+service:
+  port: 8081

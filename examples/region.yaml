@@ -1,0 +1,6 @@
+%LOADER YamlCompose
+---
+<<<: !include base.yaml
+service:
+  host: api.us.example.test
+  labels: [regional]

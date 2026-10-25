@@ -1,0 +1,3 @@
+host: shared.example.test
+port: 80
+limits: {requests: 200, burst: 40}
