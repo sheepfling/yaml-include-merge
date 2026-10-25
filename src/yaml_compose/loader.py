@@ -31,7 +31,7 @@ from ._search import IncludeSearch, validate_include_search
 from ._streams import read_bounded
 from ._unset import UNSET, UnsetType
 from ._yaml_loader import configured_include_loader, ordinary_loader, validate_yaml_loader
-from .limits import resolve_include_limits
+from .limits import DEFAULT_INCLUDE_LIMITS, IncludeLimits, resolve_include_limits
 from .resolver import (
     FileRoot,
     FileSource,
@@ -57,6 +57,8 @@ from .tags import (
 )
 
 __all__ = (
+    "DEFAULT_INCLUDE_LIMITS",
+    "IncludeLimits",
     "IncludeLoader",
     "YamlConfigLoader",
     "YamlDirective",
@@ -690,6 +692,7 @@ def load_yaml_dispatch(
     include_resolver: IncludeResolver | None = None,
     yaml_loader: type[object] = SafeLoader,
     include_search: IncludeSearch = "local-first",
+    include_limits: IncludeLimits | UnsetType = UNSET,
     max_include_depth: int | UnsetType | None = UNSET,
     max_include_files: int | UnsetType | None = UNSET,
     max_file_bytes: int | UnsetType | None = UNSET,
@@ -731,15 +734,20 @@ def load_yaml_dispatch(
     A custom ``include_resolver`` is trusted code and must avoid network access.
     Returned source identities are checked against the allowed roots before
     their streams are opened. The loader closes those streams on every path.
-    Omitted ``max_*`` values use the active process-wide ``IncludeLimits``;
-    an explicit ``None`` disables that bound, and an integer sets it. Each
+    ``include_limits`` supplies an immutable reusable profile; omitted profiles
+    use the active process-wide defaults. Explicit ``max_*`` values override
+    only their matching profile fields, and ``None`` disables that bound. Each
     top-level call gets a fresh byte/count budget. Included YAML errors retain
     source marks.
     """
     validate_yaml_loader(yaml_loader)
     validate_include_search(include_search)
     limits = resolve_include_limits(
-        max_include_depth, max_include_files, max_file_bytes, max_total_include_bytes
+        max_include_depth,
+        max_include_files,
+        max_file_bytes,
+        max_total_include_bytes,
+        include_limits=include_limits,
     )
     if source is not None and source_path is not None:
         raise ValueError("pass either source or source_path, not both")
@@ -849,6 +857,7 @@ def load_yaml_compose(
     include_resolver: IncludeResolver | None = None,
     yaml_loader: type[object] = SafeLoader,
     include_search: IncludeSearch = "local-first",
+    include_limits: IncludeLimits | UnsetType = UNSET,
     max_include_depth: int | UnsetType | None = UNSET,
     max_include_files: int | UnsetType | None = UNSET,
     max_file_bytes: int | UnsetType | None = UNSET,
@@ -872,6 +881,7 @@ def load_yaml_compose(
         include_resolver=include_resolver,
         yaml_loader=yaml_loader,
         include_search=include_search,
+        include_limits=include_limits,
         max_include_depth=max_include_depth,
         max_include_files=max_include_files,
         max_file_bytes=max_file_bytes,
@@ -889,6 +899,7 @@ def load_yaml_file(
     yaml_loader: type[object] = SafeLoader,
     include_search: IncludeSearch = "local-first",
     recursive_dispatch: bool = True,
+    include_limits: IncludeLimits | UnsetType = UNSET,
     max_include_depth: int | UnsetType | None = UNSET,
     max_include_files: int | UnsetType | None = UNSET,
     max_file_bytes: int | UnsetType | None = UNSET,
@@ -904,8 +915,10 @@ def load_yaml_file(
 
     The string or path-like object must name an existing file. Its parent is an allowed
     include root unless ``allowed_roots`` is supplied. ``search_paths`` add
-    lookup locations and default allowed roots. The ``max_*`` values override
-    the active process-wide defaults for this call. ``yaml_loader`` accepts
+    lookup locations and default allowed roots. An ``include_limits`` profile
+    provides reusable bounds; the ``max_*`` values override its matching
+    fields and omitted profiles use the active process-wide defaults.
+    ``yaml_loader`` accepts
     ``yaml.SafeLoader``, ``yaml.FullLoader``, ``yaml.Loader``, or
     ``yaml.UnsafeLoader`` and applies it to this file and all includes; the
     default is ``yaml.SafeLoader``. File lookup failures raise
@@ -922,6 +935,7 @@ def load_yaml_file(
             include_resolver=include_resolver,
             yaml_loader=yaml_loader,
             include_search=include_search,
+            include_limits=include_limits,
             max_include_depth=max_include_depth,
             max_include_files=max_include_files,
             max_file_bytes=max_file_bytes,
@@ -947,6 +961,7 @@ class YamlConfigLoader:
         search_paths: Iterable[str | os.PathLike[str] | IncludeRoot] | None = None,
         allowed_roots: Iterable[str | os.PathLike[str] | IncludeRoot] | None = None,
         recursive_dispatch: bool = True,
+        include_limits: IncludeLimits | UnsetType = UNSET,
         max_include_depth: int | UnsetType | None = UNSET,
         max_include_files: int | UnsetType | None = UNSET,
         max_file_bytes: int | UnsetType | None = UNSET,
@@ -960,9 +975,10 @@ class YamlConfigLoader:
         ``IncludeResolver`` protocol. ``yaml_loader`` may be one of PyYAML's
         ``SafeLoader``, ``FullLoader``, ``Loader``, or ``UnsafeLoader`` classes
         (or a subclass); custom constructors and resolvers apply to all
-        documents loaded by this instance. Omitted ``max_*`` values come from one
-        process-wide snapshot. Explicit ``None`` leaves one limit unbounded;
-        invalid limits raise ``ValueError``.
+        documents loaded by this instance. ``include_limits`` supplies a reusable
+        profile, and explicit ``max_*`` values override its matching fields.
+        Omitted profiles capture the active process-wide defaults. Explicit
+        ``None`` leaves one limit unbounded; invalid limits raise ``ValueError``.
         ``include_search`` accepts ``local-first`` (default), ``search-first``,
         ``local-only``, or ``search-only`` and is passed to every include request.
         It affects bare names only: explicit ``./`` and ``../`` paths require
@@ -970,7 +986,11 @@ class YamlConfigLoader:
         to every resolved file. An unsupported policy raises ``ValueError``.
         """
         limits = resolve_include_limits(
-            max_include_depth, max_include_files, max_file_bytes, max_total_include_bytes
+            max_include_depth,
+            max_include_files,
+            max_file_bytes,
+            max_total_include_bytes,
+            include_limits=include_limits,
         )
         validate_yaml_loader(yaml_loader)
         validate_include_search(include_search)
@@ -980,10 +1000,28 @@ class YamlConfigLoader:
         self.search_paths = tuple(search_paths or ())
         self.allowed_roots = tuple(allowed_roots) if allowed_roots is not None else None
         self.recursive_dispatch = recursive_dispatch
+        self._include_limits = limits
         self.max_include_depth = limits.max_include_depth
         self.max_include_files = limits.max_include_files
         self.max_file_bytes = limits.max_file_bytes
         self.max_total_include_bytes = limits.max_total_include_bytes
+
+    @property
+    def include_limits(self) -> IncludeLimits:
+        """Return this loader's immutable effective limits profile."""
+        if (
+            self.max_include_depth == self._include_limits.max_include_depth
+            and self.max_include_files == self._include_limits.max_include_files
+            and self.max_file_bytes == self._include_limits.max_file_bytes
+            and self.max_total_include_bytes == self._include_limits.max_total_include_bytes
+        ):
+            return self._include_limits
+        return IncludeLimits(
+            max_include_depth=self.max_include_depth,
+            max_include_files=self.max_include_files,
+            max_file_bytes=self.max_file_bytes,
+            max_total_include_bytes=self.max_total_include_bytes,
+        )
 
     def load_file(
         self, path: str | os.PathLike[str], *, loader_tag: str | UnsetType | None = UNSET
@@ -998,10 +1036,7 @@ class YamlConfigLoader:
             yaml_loader=self.yaml_loader,
             include_search=self.include_search,
             recursive_dispatch=self.recursive_dispatch,
-            max_include_depth=self.max_include_depth,
-            max_include_files=self.max_include_files,
-            max_file_bytes=self.max_file_bytes,
-            max_total_include_bytes=self.max_total_include_bytes,
+            include_limits=self.include_limits,
         )
 
     def load_stream(
@@ -1028,10 +1063,7 @@ class YamlConfigLoader:
             include_resolver=self.include_resolver,
             yaml_loader=self.yaml_loader,
             include_search=self.include_search,
-            max_include_depth=self.max_include_depth,
-            max_include_files=self.max_include_files,
-            max_file_bytes=self.max_file_bytes,
-            max_total_include_bytes=self.max_total_include_bytes,
+            include_limits=self.include_limits,
         )
 
     def load_include(
@@ -1055,8 +1087,5 @@ class YamlConfigLoader:
             include_resolver=self.include_resolver,
             yaml_loader=self.yaml_loader,
             include_search=self.include_search,
-            max_include_depth=self.max_include_depth,
-            max_include_files=self.max_include_files,
-            max_file_bytes=self.max_file_bytes,
-            max_total_include_bytes=self.max_total_include_bytes,
+            include_limits=self.include_limits,
         )

@@ -88,15 +88,28 @@ def resolve_include_limits(
     max_include_files: int | UnsetType | None,
     max_file_bytes: int | UnsetType | None,
     max_total_include_bytes: int | UnsetType | None,
+    *,
+    include_limits: IncludeLimits | UnsetType = UNSET,
 ) -> IncludeLimits:
-    """Combine individual overrides with the active process-wide defaults.
+    """Combine a reusable profile and individual overrides into one snapshot.
 
-    An omitted argument (``UNSET``) uses the corresponding current default;
-    explicit ``None`` removes the bound. The returned immutable limits object
-    is one snapshot, so later default changes cannot alter an in-progress load.
-    Invalid bounds raise ``ValueError``.
+    An omitted profile uses the current process-wide default. Omitted field
+    overrides keep the profile value; explicit ``None`` removes that bound.
+    The returned immutable limits object is one snapshot, so later default
+    changes cannot alter an in-progress load. Invalid bounds raise
+    ``ValueError`` and an invalid profile raises ``TypeError``.
     """
-    defaults = get_default_include_limits()
+    defaults = get_default_include_limits() if include_limits is UNSET else include_limits
+    if not isinstance(defaults, IncludeLimits):
+        raise TypeError("include_limits must be an IncludeLimits instance")
+    overrides = (
+        max_include_depth,
+        max_include_files,
+        max_file_bytes,
+        max_total_include_bytes,
+    )
+    if all(value is UNSET for value in overrides):
+        return defaults
     return IncludeLimits(
         max_include_depth=(
             defaults.max_include_depth

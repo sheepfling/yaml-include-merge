@@ -396,6 +396,21 @@ A few boundaries are worth knowing:
 
 For details on the grammar, operators, and implementation choices, see the [design notes](docs/design-notes.md).
 
+Use an immutable `IncludeLimits` profile to share bounds across loads. Pass it to
+`YamlConfigLoader` or to `load_yaml_file`, `load_yaml_dispatch`, or `load_yaml_compose`:
+
+```python
+from yaml_compose import DEFAULT_INCLUDE_LIMITS, IncludeLimits, YamlConfigLoader
+
+profile = IncludeLimits(max_include_depth=8, max_include_files=24)
+loader = YamlConfigLoader(include_limits=profile)
+```
+
+`DEFAULT_INCLUDE_LIMITS` exposes the package baseline. `set_default_include_limits` can
+change the process-wide defaults for new loads; each loader captures its limits when it is
+created. Existing `max_*` arguments override only their corresponding profile fields, and
+an explicit `None` leaves that bound unlimited.
+
 ## Examples
 
 The repository includes runnable examples covering the main composition behaviors:
