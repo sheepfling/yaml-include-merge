@@ -486,6 +486,14 @@ The package supports Python 3.10 and newer.
 Behavioral examples are exercised by [`tests/test_examples.py`](tests/test_examples.py),
 with individual operator semantics covered by [`tests/test_semantics.py`](tests/test_semantics.py).
 
+## License and attribution
+
+The original loader and ongoing package development are credited to `sheepfling`.
+`yaml-compose` is distributed under the [MIT license](LICENSE).
+
+See the [changelog](CHANGELOG.md) for release notes and the [release guide](docs/releasing.md)
+for the v0.1.0 preparation and publishing process.
+
 ---
 
 **YAML for the data. A few explicit operators for composing it.**
