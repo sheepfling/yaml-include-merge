@@ -30,12 +30,10 @@ jobs:
           cache: pip
       - run: python -m pip install --upgrade pip
       - run: python -m pip install -e ".[dev]"
-      - run: python -m build
-      - name: Validate release artifacts and tag version
+      - name: Build and validate release distributions
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
-        run: python -m scripts.check_artifacts --dist-dir dist --release-tag "$RELEASE_TAG"
-      - run: python -m twine check --strict dist/*
+        run: python -m scripts.release build
       - name: Smoke-test the installed wheel
         run: |
           python -m pip install --no-deps --force-reinstall dist/*.whl

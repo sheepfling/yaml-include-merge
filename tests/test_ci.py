@@ -64,11 +64,6 @@ def test_coordinator_modes_run_full_suites_with_the_active_interpreter(
         assert Path(env["TEMP"]).is_relative_to(root / "build" / "local-checks")
         assert check is False
         commands.append(tuple(command))
-        if tuple(command[1:3]) == ("-m", "build"):
-            dist = Path(command[command.index("--outdir") + 1])
-            dist.mkdir()
-            (dist / "yaml_compose-0.0.0-py3-none-any.whl").touch()
-            (dist / "yaml_compose-0.0.0.tar.gz").touch()
         return subprocess.CompletedProcess(command, 0)
 
     monkeypatch.setattr("scripts.ci._rumdl_command", find_rumdl)
@@ -82,7 +77,7 @@ def test_coordinator_modes_run_full_suites_with_the_active_interpreter(
     assert ("scripts.check_pyright" in modules) is has_python_checks
     assert ("pytest" in modules) is has_tests
     assert ("mdrepo" in modules) is has_repository_checks
-    assert ("build" in modules) is has_repository_checks
+    assert ("scripts.check_build" in modules) is has_repository_checks
     if has_tests:
         pytest_command = next(command for command in python_commands if command[2] == "pytest")
         # No paths or selectors: newly discovered semantic tests join CI automatically.
@@ -93,9 +88,6 @@ def test_coordinator_modes_run_full_suites_with_the_active_interpreter(
         assert any(
             command[1:5] == ("-m", "pre_commit", "run", "--all-files") for command in commands
         )
-        metadata_command = next(command for command in python_commands if command[2] == "twine")
-        assert len(metadata_command[4:]) == 2
-        assert "scripts.check_artifacts" in modules
 
 
 def test_coordinator_stops_and_propagates_a_failed_check(monkeypatch: pytest.MonkeyPatch) -> None:

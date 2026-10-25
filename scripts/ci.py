@@ -37,7 +37,6 @@ def _rumdl_command() -> str:
 def _commands(
     python: str,
     rumdl: str,
-    dist: Path,
     *,
     mode: Mode,
     fix: bool,
@@ -70,25 +69,7 @@ def _commands(
             (python, "-m", "pre_commit", "validate-config", ".pre-commit-config.yaml"),
         ),
         ("pre-commit hooks", (python, "-m", "pre_commit", "run", "--all-files")),
-        (
-            "package build",
-            (
-                python,
-                "-m",
-                "build",
-                "--no-isolation",
-                "--quiet",
-                "--sdist",
-                "--wheel",
-                "--outdir",
-                str(dist),
-            ),
-        ),
-        (
-            "package contents",
-            (python, "-m", "scripts.check_artifacts", "--dist-dir", str(dist)),
-        ),
-        ("distribution metadata", (python, "-m", "twine", "check")),
+        ("package build and validation", (python, "-m", "scripts.check_build")),
     ]
     fixes: list[tuple[str, tuple[str, ...]]] = (
         [
@@ -177,7 +158,6 @@ def main(argv: Sequence[str] = ()) -> int:
     build_root.mkdir(parents=True, exist_ok=True)
 
     with tempfile.TemporaryDirectory(prefix="run-", dir=build_root) as temporary:
-        dist = Path(temporary) / "dist"
         environment = os.environ.copy()
         environment.update(
             {
@@ -188,10 +168,8 @@ def main(argv: Sequence[str] = ()) -> int:
                 "TMPDIR": temporary,
             }
         )
-        commands = _commands(python, rumdl, dist, mode=mode, fix=args.fix)
+        commands = _commands(python, rumdl, mode=mode, fix=args.fix)
         for name, command in commands:
-            if name == "distribution metadata":
-                command = (*command, *(str(path) for path in sorted(dist.iterdir())))
             result = _run(root, command, environment)
             if result:
                 print(f"Failed check: {name}", file=sys.stderr)

@@ -458,8 +458,8 @@ branch coverage (at least 80%). Test discovery includes both the simple examples
 nested composition, search policy, overlay, and spread tests.
 
 A separate Python 3.14 job runs `python -m scripts.ci --quality-only` for Markdown lint,
-repository policy, pre-commit hooks, package builds, archive contents, and distribution
-metadata, as well as Python quality checks. A full local run covers both groups with the
+repository policy, pre-commit hooks, package builds, and Twine validation, as well as
+Python quality checks. A full local run covers both groups with the
 active interpreter. Add `--fix` to apply safe Ruff, rumdl, and mdrepo fixes before checking.
 
 To run the Python checks alone, including on Python 3.10, install the smaller extras:
@@ -492,7 +492,7 @@ The original loader and ongoing package development are credited to `sheepfling`
 `yaml-compose` is distributed under the [MIT license](LICENSE).
 
 See the [changelog](CHANGELOG.md) for release notes and the [release guide](docs/releasing.md)
-for the v0.1.0 preparation and publishing process.
+for the publishing process.
 
 ---
 
