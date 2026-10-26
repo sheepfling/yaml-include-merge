@@ -84,16 +84,25 @@ config = load_yaml_file("production.yaml")
 The `%LOADER YamlCompose` package header opts the document into composition. Ordinary
 YAML files can still be loaded without modification.
 
-## Include JSON and TOML sources
+## Include JSON-family and TOML sources
 
-`!include` selects JSON for a resolved `.json` file and TOML for `.toml`; all other
-file suffixes keep the existing YAML behavior. Included JSON objects can be merged
-with `<<<`, JSON arrays can be included or used with `!spread`, and TOML dates and
-times stay as Python `date`, `time`, and `datetime` values. Duplicate JSON object
-keys and non-finite numbers are rejected. Includes in every format use the same
-root checks, cycle tracking, and byte and depth limits.
-JSON and TOML input must be UTF-8 without a byte-order mark (BOM); a BOM is
-reported as a marked include parse error rather than silently removed.
+`!include` selects a parser from the resolved source suffix: `.json`, `.jsonc`,
+`.json5`, or `.toml`. Unknown suffixes keep the existing YAML behavior. YAML
+remains the composition layer, so included mappings and lists use the same merge,
+replace, delete, and spread operations.
+
+`.json` is strict JSON. `.jsonc` allows `//` and `/* ... */` comments but keeps
+strict JSON rules, including rejection of duplicate keys, trailing commas, and
+non-finite numbers. `.json5` supports JSON5 syntax; install
+`yaml-compose[json5]` to enable it. JSON5 duplicate keys are rejected. Its
+`NaN`, `Infinity`, and decimal overflow values remain Python floats, including
+infinity, as returned by the JSON5 parser. All formats must be UTF-8 without a
+byte-order mark (BOM); a BOM is a marked include parse error.
+
+TOML dates and times stay as Python `date`, `time`, and `datetime` values.
+Includes in every format use the same root checks, cycle tracking, and byte and
+depth limits. The [format guide](docs/formats.md) describes the parser behavior,
+optional dependency, and adapter API.
 Python 3.10 uses the declared `tomli` dependency; Python 3.11 and later use the
 standard-library TOML parser.
 

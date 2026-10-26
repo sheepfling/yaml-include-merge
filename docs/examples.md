@@ -123,6 +123,54 @@ checks. Exact outputs are asserted in
 [`tests/test_examples.py`](../tests/test_examples.py) and parser failures in
 [`tests/test_include_formats.py`](../tests/test_include_formats.py).
 
+### Layer JSONC and JSON5
+
+JSONC is useful when shared JSON defaults need comments while retaining JSON's
+strict data rules. JSON5 accepts a wider configuration syntax; install its
+optional parser with `pip install 'yaml-compose[json5]'`.
+
+`defaults.jsonc`:
+
+```jsonc
+{
+  // Shared service defaults.
+  "service": { "port": 8080 },
+  "labels": ["base"]
+}
+```
+
+`local.json5`:
+
+```json5
+{
+  service: { host: 'api.example.test' },
+  labels: ['production',],
+}
+```
+
+Compose both in YAML:
+
+```yaml
+%LOADER YamlCompose
+---
+<<<: [!include defaults.jsonc, !include local.json5]
+```
+
+The YAML merge keeps the inherited `service.port`, adds `service.host`, and
+replaces the list:
+
+```python
+{
+    "service": {"port": 8080, "host": "api.example.test"},
+    "labels": ["production"],
+}
+```
+
+The `.jsonc` parser rejects trailing commas, duplicate keys, and non-finite
+numbers just like `.json`. JSON5 duplicate keys are rejected; its native
+`NaN`/infinity values remain Python floats. See the
+[format guide](formats.md) for parser and error details.
+
 ## Three filesystem layers
 
 These files live in `examples/`. The first file provides defaults:

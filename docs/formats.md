@@ -4,12 +4,28 @@
 `!include`, merge, `!delete`, `!replace`, and `!spread` operations. An included non-YAML file
 is parsed into its native Python value; the package does not interpret YAML tags inside it.
 
-The default registry selects YAML for `.yaml` and `.yml`, strict JSON for `.json`, and TOML
-for `.toml`. TOML uses `tomllib` where available and the package's existing `tomli` dependency
-on Python 3.10. Unknown suffixes continue through YAML for compatibility. Selection uses the
-resolved source suffix; a resolver can instead set `ResolvedInclude.format_id` to select a
-registered adapter explicitly. An unknown explicit ID is an error. No content sniffing or
-entry-point discovery occurs.
+The default registry selects YAML for `.yaml` and `.yml`, strict JSON for `.json`, JSONC for
+`.jsonc`, JSON5 for `.json5`, and TOML for `.toml`. JSONC masks comments and then uses the
+same strict JSON parser as `.json`; duplicate keys, trailing commas, and non-finite values
+remain errors. Comment masking preserves line breaks and token boundaries. JSON5 is optional:
+install `yaml-compose[json5]` to enable it. Its parser loads lazily only when a `.json5` source
+is selected. TOML uses `tomllib` where available and the package's existing `tomli`
+dependency on Python 3.10. Unknown suffixes continue through YAML for compatibility.
+Selection uses the resolved source suffix; a resolver can instead set
+`ResolvedInclude.format_id` to select a registered adapter explicitly. An unknown explicit ID
+is an error. No content sniffing or entry-point discovery occurs.
+
+JSON, JSONC, JSON5, and TOML sources must be UTF-8 without a byte-order mark (BOM). JSONC
+comment replacement preserves source coordinates; malformed strict JSON errors therefore
+keep their original line and column. Unterminated block comments report their opening
+coordinate. JSON5 syntax errors are `ValueError`s from the parser with line and column text;
+duplicate-key errors have no token coordinate, so the loader does not invent one. JSON5
+`NaN`, `Infinity`, and decimal values that overflow Python floats retain the parser's native
+float result (`nan` or positive/negative infinity). The JSON5 dependency is pure Python and
+has no runtime dependencies; its maintainer warns that it is substantially slower than the
+standard JSON parser and deeply nested input may reach Python's recursion limit. See the
+[json5 0.17.3 package page](https://pypi.org/project/json5/0.17.3/) and its
+[maintainer documentation](https://github.com/dpranke/pyjson5/blob/main/README.md).
 
 ## Register a parser
 
@@ -74,8 +90,8 @@ YAML include mark and preserves the exception chain.
   suffix owned by another ID.
 - The built-in YAML entry stays private to the loader so PyYAML nodes, constructors, and
   source marks retain their current behavior. A `FormatSelection` for YAML has no public
-  adapter. JSON and TOML return their parser-native values, including TOML date and time
-  objects.
+  adapter. JSONC uses strict JSON values, JSON5 keeps native parser values including special
+  floats, and TOML keeps its date and time objects.
 - Calls with the default loader and built-in registry return the `YamlType` alias. It covers
   standard safe YAML values plus the native JSON/TOML results. Supplying a custom registry
   or YAML loader returns `object`, because an application adapter or constructor can return

@@ -99,6 +99,17 @@ class _TomlParser(Protocol):
     def loads(self, text: str, /) -> object: ...
 
 
+class _Json5Parser(Protocol):
+    def loads(
+        self,
+        text: str,
+        *,
+        strict: bool,
+        allow_duplicate_keys: bool,
+        consume_trailing: bool,
+    ) -> object: ...
+
+
 def _unique_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
     """Construct a JSON object while rejecting duplicate keys."""
     result: dict[str, object] = {}
@@ -131,6 +142,67 @@ def _parse_strict_json(text: str) -> object:
     )
 
 
+def _jsonc_location(text: str, offset: int) -> tuple[int, int]:
+    """Return one-based line and column for an offset with CR, LF, or CRLF."""
+    prefix = text[:offset]
+    line = prefix.count("\n") + prefix.count("\r") - prefix.count("\r\n") + 1
+    last_break = max(prefix.rfind("\n"), prefix.rfind("\r"))
+    return line, offset - last_break
+
+
+def _mask_jsonc_comments(text: str) -> str:
+    """Mask JSONC comments with whitespace without changing source coordinates."""
+    chunks: list[str] = []
+    chunk_start = 0
+    position = 0
+    in_string = False
+    escaped = False
+    while position < len(text):
+        character = text[position]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == '"':
+                in_string = False
+            position += 1
+            continue
+
+        if character == '"':
+            in_string = True
+            position += 1
+            continue
+        if character != "/" or position + 1 >= len(text):
+            position += 1
+            continue
+
+        following = text[position + 1]
+        if following == "/":
+            end = position
+            while end < len(text) and text[end] not in "\r\n":
+                end += 1
+            chunks.extend((text[chunk_start:position], " " * (end - position)))
+            chunk_start = end
+            position = end
+            continue
+        if following == "*":
+            end = text.find("*/", position + 2)
+            if end < 0:
+                line, column = _jsonc_location(text, position)
+                raise FormatParseError(f"unterminated block comment at line {line}, column {column}")
+            end += 2
+            comment = text[position:end]
+            masked_comment = "".join(character if character in "\r\n" else " " for character in comment)
+            chunks.extend((text[chunk_start:position], masked_comment))
+            chunk_start = end
+            position = end
+            continue
+        position += 1
+    chunks.append(text[chunk_start:])
+    return "".join(chunks)
+
+
 def _toml_parser() -> _TomlParser:
     """Use tomllib or the existing Python 3.10 tomli dependency lazily."""
     try:
@@ -158,6 +230,53 @@ class _StrictJsonAdapter:
             raise FormatParseError(str(exc)) from exc
 
 
+class _JsoncAdapter:
+    descriptor: ClassVar[FormatDescriptor] = FormatDescriptor("jsonc", (".jsonc",))
+
+    def parse(self, source: FormatInput, /) -> object:
+        try:
+            text = source.data.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise FormatParseError(f"include source {source.source_name} is not UTF-8 text") from exc
+        try:
+            return _parse_strict_json(_mask_jsonc_comments(text))
+        except FormatParseError:
+            raise
+        except (RecursionError, ValueError) as exc:
+            raise FormatParseError(str(exc)) from exc
+
+
+def _json5_parser() -> _Json5Parser:
+    """Load JSON5 support only when a JSON5 include is selected."""
+    try:
+        return cast(_Json5Parser, importlib.import_module("json5"))
+    except ModuleNotFoundError as exc:
+        if exc.name != "json5":
+            raise
+        raise FormatDependencyError(
+            "JSON5 includes require the optional 'json5' dependency; install yaml-compose[json5]"
+        ) from exc
+
+
+class _Json5Adapter:
+    descriptor: ClassVar[FormatDescriptor] = FormatDescriptor("json5", (".json5",))
+
+    def parse(self, source: FormatInput, /) -> object:
+        try:
+            text = source.data.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise FormatParseError(f"include source {source.source_name} is not UTF-8 text") from exc
+        if text.startswith("\ufeff"):
+            raise FormatParseError("UTF-8 byte-order mark (BOM) is not supported")
+        try:
+            parser = _json5_parser()
+            return parser.loads(text, strict=True, allow_duplicate_keys=False, consume_trailing=True)
+        except FormatDependencyError:
+            raise
+        except (RecursionError, ValueError) as exc:
+            raise FormatParseError(str(exc)) from exc
+
+
 class _TomlAdapter:
     descriptor: ClassVar[FormatDescriptor] = FormatDescriptor("toml", (".toml",))
 
@@ -178,10 +297,10 @@ class FormatRegistry:
     """Mutable registry builder; loaders capture an independent frozen snapshot.
 
     A new registry contains the private YAML composition entry and the built-in
-    strict JSON and TOML adapters. Unknown suffixes continue to use YAML. Adapter
-    objects must be stateless; snapshots copy lookup maps, retain immutable
-    descriptors, and share adapters. Explicit overrides may replace the same
-    format ID only.
+    strict JSON, JSONC, JSON5, and TOML adapters. JSON5 imports its optional parser
+    only when selected. Unknown suffixes continue to use YAML. Adapter objects must
+    be stateless; snapshots copy lookup maps, retain immutable descriptors, and
+    share adapters. Explicit overrides may replace the same format ID only.
     """
 
     def __init__(self) -> None:
@@ -191,6 +310,8 @@ class FormatRegistry:
         self._frozen = False
         self._install_yaml()
         self.register(_StrictJsonAdapter())
+        self.register(_JsoncAdapter())
+        self.register(_Json5Adapter())
         self.register(_TomlAdapter())
 
     def _install_yaml(self) -> None:

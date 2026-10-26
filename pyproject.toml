@@ -37,7 +37,8 @@ Documentation = "https://github.com/sheepfling/yaml-include-merge/blob/main/READ
 Changelog = "https://github.com/sheepfling/yaml-include-merge/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
-test = ["pytest>=8.3", "pytest-cov>=6.0"]
+json5 = ["json5>=0.17.3,<0.18"]
+test = ["pytest>=8.3", "pytest-cov>=6.0", "json5>=0.17.3,<0.18"]
 lint = ["pyright>=1.1.414", "ruff>=0.9", "typing_extensions>=4.16"]
 dev = [
     "build>=1.2",
