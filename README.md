@@ -329,6 +329,19 @@ By default, the top-level file's directory and configured search paths define th
 roots. You can supply `allowed_roots` explicitly when a configuration needs access to a
 broader or different directory layout.
 
+To reject absolute paths in `!include`, set `allow_absolute_includes=False`:
+
+```python
+loader = YamlConfigLoader(
+    allowed_roots=[Path("config").resolve()],
+    allow_absolute_includes=False,
+)
+```
+
+The option also applies to nested includes. Relative `../` paths remain available only
+when their resolved target stays within an allowed root. Absolute paths are allowed by
+default for compatibility; allowed roots constrain them in either mode.
+
 These boundaries also apply after resolving symlinks. A file found outside an allowed root
 is an error, not a reason to silently try the next candidate.
 

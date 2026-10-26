@@ -276,6 +276,11 @@ def _include_error(node: Node, message: str, cause: Exception | None = None) -> 
     raise error
 
 
+def _validate_absolute_include_policy(allow_absolute_includes: object) -> None:
+    if not isinstance(allow_absolute_includes, bool):
+        raise ValueError("allow_absolute_includes must be a bool")
+
+
 class IncludeLoader(SafeLoader):
     """Construct bounded includes, shallow or deep mapping merges, and list spreads.
 
@@ -300,9 +305,11 @@ class IncludeLoader(SafeLoader):
         source: IncludeSource | None = None,
         yaml_loader: type[object] = SafeLoader,
         include_search: IncludeSearch = "local-first",
+        allow_absolute_includes: bool = True,
     ) -> None:
         """Initialize one parse with its source, resolver, YAML loader, and budget."""
         validate_include_search(include_search)
+        _validate_absolute_include_policy(allow_absolute_includes)
         super().__init__(stream)
         self.current_file = current_file
         self.search_paths = tuple(search_paths)
@@ -312,6 +319,7 @@ class IncludeLoader(SafeLoader):
         self.budget = budget
         self.yaml_loader = yaml_loader
         self.include_search: IncludeSearch = include_search
+        self.allow_absolute_includes = allow_absolute_includes
         self.include_resolver = include_resolver or FileSystemIncludeResolver()
         self.source = source or (FileSource(current_file) if current_file is not None else None)
 
@@ -392,7 +400,7 @@ class IncludeLoader(SafeLoader):
         if not name:
             _include_error(node, f"{INCLUDE_TAG} expects a non-empty path")
         try:
-            validate_include_name(name, allow_absolute=True)
+            validate_include_name(name, allow_absolute=self.allow_absolute_includes)
         except ValueError as exc:
             _include_error(node, str(exc), exc)
         try:
@@ -498,6 +506,7 @@ class IncludeLoader(SafeLoader):
                         include_resolver=self.include_resolver,
                         yaml_loader=self.yaml_loader,
                         include_search=self.include_search,
+                        allow_absolute_includes=self.allow_absolute_includes,
                     )
                 finally:
                     self.budget.current_depth -= 1
@@ -656,6 +665,7 @@ def _load_composed_text(
     include_resolver: IncludeResolver,
     yaml_loader: type[object],
     include_search: IncludeSearch,
+    allow_absolute_includes: bool,
 ) -> YamlType:
     """Parse text with include behavior using already normalized filesystem state."""
     loader = configured_include_loader(yaml_loader, IncludeLoader)(
@@ -670,6 +680,7 @@ def _load_composed_text(
         include_resolver=include_resolver,
         yaml_loader=yaml_loader,
         include_search=include_search,
+        allow_absolute_includes=allow_absolute_includes,
     )
     try:
         result = loader.get_single_data()
@@ -692,6 +703,7 @@ def load_yaml_dispatch(
     include_resolver: IncludeResolver | None = None,
     yaml_loader: type[object] = SafeLoader,
     include_search: IncludeSearch = "local-first",
+    allow_absolute_includes: bool = True,
     include_limits: IncludeLimits | UnsetType = UNSET,
     max_include_depth: int | UnsetType | None = UNSET,
     max_include_files: int | UnsetType | None = UNSET,
@@ -730,6 +742,8 @@ def load_yaml_dispatch(
     to that source, without fallback. Absolute names identify an exact file.
     Search order never changes allowed roots or mapping merge precedence.
     Unknown search policies raise ``ValueError``.
+    Set ``allow_absolute_includes=False`` to reject absolute include names,
+    including in nested documents. Allowed roots still constrain every include.
 
     A custom ``include_resolver`` is trusted code and must avoid network access.
     Returned source identities are checked against the allowed roots before
@@ -742,6 +756,7 @@ def load_yaml_dispatch(
     """
     validate_yaml_loader(yaml_loader)
     validate_include_search(include_search)
+    _validate_absolute_include_policy(allow_absolute_includes)
     limits = resolve_include_limits(
         max_include_depth,
         max_include_files,
@@ -841,6 +856,7 @@ def load_yaml_dispatch(
         include_resolver=resolver,
         yaml_loader=yaml_loader,
         include_search=include_search,
+        allow_absolute_includes=allow_absolute_includes,
     )
     return result
 
@@ -857,6 +873,7 @@ def load_yaml_compose(
     include_resolver: IncludeResolver | None = None,
     yaml_loader: type[object] = SafeLoader,
     include_search: IncludeSearch = "local-first",
+    allow_absolute_includes: bool = True,
     include_limits: IncludeLimits | UnsetType = UNSET,
     max_include_depth: int | UnsetType | None = UNSET,
     max_include_files: int | UnsetType | None = UNSET,
@@ -881,6 +898,7 @@ def load_yaml_compose(
         include_resolver=include_resolver,
         yaml_loader=yaml_loader,
         include_search=include_search,
+        allow_absolute_includes=allow_absolute_includes,
         include_limits=include_limits,
         max_include_depth=max_include_depth,
         max_include_files=max_include_files,
@@ -898,6 +916,7 @@ def load_yaml_file(
     include_resolver: IncludeResolver | None = None,
     yaml_loader: type[object] = SafeLoader,
     include_search: IncludeSearch = "local-first",
+    allow_absolute_includes: bool = True,
     recursive_dispatch: bool = True,
     include_limits: IncludeLimits | UnsetType = UNSET,
     max_include_depth: int | UnsetType | None = UNSET,
@@ -935,6 +954,7 @@ def load_yaml_file(
             include_resolver=include_resolver,
             yaml_loader=yaml_loader,
             include_search=include_search,
+            allow_absolute_includes=allow_absolute_includes,
             include_limits=include_limits,
             max_include_depth=max_include_depth,
             max_include_files=max_include_files,
@@ -958,6 +978,7 @@ class YamlConfigLoader:
         include_resolver: IncludeResolver | None = None,
         yaml_loader: type[object] = SafeLoader,
         include_search: IncludeSearch = "local-first",
+        allow_absolute_includes: bool = True,
         search_paths: Iterable[str | os.PathLike[str] | IncludeRoot] | None = None,
         allowed_roots: Iterable[str | os.PathLike[str] | IncludeRoot] | None = None,
         recursive_dispatch: bool = True,
@@ -984,6 +1005,7 @@ class YamlConfigLoader:
         It affects bare names only: explicit ``./`` and ``../`` paths require
         a source and never fall back to search paths. Allowed roots still apply
         to every resolved file. An unsupported policy raises ``ValueError``.
+        ``allow_absolute_includes=False`` rejects absolute include names.
         """
         limits = resolve_include_limits(
             max_include_depth,
@@ -994,9 +1016,11 @@ class YamlConfigLoader:
         )
         validate_yaml_loader(yaml_loader)
         validate_include_search(include_search)
+        _validate_absolute_include_policy(allow_absolute_includes)
         self.include_resolver = include_resolver
         self.yaml_loader = yaml_loader
         self.include_search: IncludeSearch = include_search
+        self.allow_absolute_includes = allow_absolute_includes
         self.search_paths = tuple(search_paths or ())
         self.allowed_roots = tuple(allowed_roots) if allowed_roots is not None else None
         self.recursive_dispatch = recursive_dispatch
@@ -1035,6 +1059,7 @@ class YamlConfigLoader:
             include_resolver=self.include_resolver,
             yaml_loader=self.yaml_loader,
             include_search=self.include_search,
+            allow_absolute_includes=self.allow_absolute_includes,
             recursive_dispatch=self.recursive_dispatch,
             include_limits=self.include_limits,
         )
@@ -1063,6 +1088,7 @@ class YamlConfigLoader:
             include_resolver=self.include_resolver,
             yaml_loader=self.yaml_loader,
             include_search=self.include_search,
+            allow_absolute_includes=self.allow_absolute_includes,
             include_limits=self.include_limits,
         )
 
@@ -1087,5 +1113,6 @@ class YamlConfigLoader:
             include_resolver=self.include_resolver,
             yaml_loader=self.yaml_loader,
             include_search=self.include_search,
+            allow_absolute_includes=self.allow_absolute_includes,
             include_limits=self.include_limits,
         )

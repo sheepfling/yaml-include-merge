@@ -160,6 +160,84 @@ def test_absolute_names_resolve_exactly_under_any_policy(test_path: Path) -> Non
         test_path, "main.yaml", f"%LOADER YamlCompose\n---\n!include {value.as_posix()}\n"
     )
     assert load_yaml_file(config, include_search="search-only") == "exact"
+    assert load_yaml_file(config, allow_absolute_includes=True) == "exact"
+
+
+@pytest.mark.parametrize(
+    "entry", ["file", "dispatch", "compose", "facade-file", "facade-stream", "facade-include"]
+)
+def test_absolute_include_policy_is_forwarded_by_every_entry_point(
+    test_path: Path, entry: str
+) -> None:
+    value = write(test_path, "value.yaml", "exact\n")
+    include = f"!include {value.as_posix()}\n"
+    document = f"%LOADER YamlCompose\n---\n{include}"
+    config = write(test_path, "main.yaml", document)
+    loader = YamlConfigLoader(allow_absolute_includes=False)
+
+    with pytest.raises(yaml.YAMLError, match="include paths must be relative paths"):
+        if entry == "file":
+            load_yaml_file(config, allow_absolute_includes=False)
+        elif entry == "dispatch":
+            load_yaml_dispatch(
+                StringIO(document), source_path=config, allow_absolute_includes=False
+            )
+        elif entry == "compose":
+            load_yaml_compose(StringIO(include), source_path=config, allow_absolute_includes=False)
+        elif entry == "facade-file":
+            loader.load_file(config)
+        elif entry == "facade-stream":
+            loader.load_stream(StringIO(document), source_path=config)
+        else:
+            loader.load_include(StringIO(include), source_path=config)
+
+
+def test_absolute_include_policy_is_inherited_by_nested_documents(test_path: Path) -> None:
+    value = write(test_path, "value.yaml", "exact\n")
+    write(test_path, "child.yaml", f"value: !include {value.as_posix()}\n")
+    config = write(test_path, "main.yaml", "%LOADER YamlCompose\n---\n!include child.yaml\n")
+
+    with pytest.raises(yaml.YAMLError, match="include paths must be relative paths"):
+        load_yaml_file(config, allow_absolute_includes=False)
+
+
+def test_absolute_include_is_rejected_before_custom_resolver(test_path: Path) -> None:
+    class UnexpectedResolver:
+        def resolve(self, request: IncludeRequest) -> ResolvedInclude:
+            raise AssertionError(f"resolver called for {request.name!r}")
+
+    value = write(test_path, "value.yaml", "exact\n")
+    config = write(
+        test_path, "main.yaml", f"%LOADER YamlCompose\n---\n!include {value.as_posix()}\n"
+    )
+    with pytest.raises(yaml.YAMLError, match="include paths must be relative paths"):
+        load_yaml_file(
+            config, include_resolver=UnexpectedResolver(), allow_absolute_includes=False
+        )
+
+
+def test_disallowing_absolute_paths_keeps_parent_paths_within_allowed_roots(
+    test_path: Path,
+) -> None:
+    write(test_path, "shared.yaml", "inside\n")
+    config = write(
+        test_path, "app/main.yaml", "%LOADER YamlCompose\n---\n!include ../shared.yaml\n"
+    )
+
+    assert load_yaml_file(
+        config, allowed_roots=[test_path], allow_absolute_includes=False
+    ) == "inside"
+    with pytest.raises(yaml.YAMLError, match="outside the allowed roots"):
+        load_yaml_file(config, allow_absolute_includes=False)
+
+
+@pytest.mark.parametrize("invalid", [None, "false", 0])
+def test_absolute_include_policy_requires_a_bool(invalid: object) -> None:
+    policy = cast(bool, invalid)
+    with pytest.raises(ValueError, match="allow_absolute_includes must be a bool"):
+        YamlConfigLoader(allow_absolute_includes=policy)
+    with pytest.raises(ValueError, match="allow_absolute_includes must be a bool"):
+        load_yaml_dispatch(StringIO("value: ordinary\n"), allow_absolute_includes=policy)
 
 
 def test_platform_relative_prefix_stays_pinned_under_search_first(test_path: Path) -> None:
