@@ -329,6 +329,10 @@ By default, the top-level file's directory and configured search paths define th
 roots. You can supply `allowed_roots` explicitly when a configuration needs access to a
 broader or different directory layout.
 
+An allowed root is required only when `!include` is used. Streams containing only
+anchors, mapping overlays, and list spreads work without search paths or roots.
+An include without an allowed root raises a YAML error at the tag before its resolver is called.
+
 To reject absolute paths in `!include`, set `allow_absolute_includes=False`:
 
 ```python

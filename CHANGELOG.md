@@ -12,6 +12,8 @@ Initial release of `yaml-compose`, a PyYAML adapter for composing configuration 
   a merge sequence take precedence over later sources.
 - `!delete` removes inherited keys, `!replace` replaces a mapping, and `!spread` inserts
   anchored or included sequence items at their declared position.
+- In-memory mapping overlays and list spreads work without search paths or allowed roots;
+  `!include` checks for an allowed root when it is used.
 - Reusable include-limit profiles, configurable library defaults, per-load overrides,
   and `None` for individual unbounded resources. Profiles can be adjusted for later loads;
   each load captures its own limits snapshot. Default budgets allow 32 include levels,

@@ -43,7 +43,6 @@ jobs:
 
           result = load_yaml_compose(
               StringIO("items: [before, !spread [[one, two]], after]\n"),
-              search_paths=["."],
           )
           assert result == {"items": ["before", "one", "two", "after"]}
           PY

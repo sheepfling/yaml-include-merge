@@ -1,11 +1,109 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+from io import StringIO
 from pathlib import Path
 
 import pytest
 import yaml
+from yaml.constructor import ConstructorError
 
-from yaml_compose import load_yaml_file
+from yaml_compose import (
+    IncludeRequest,
+    ResolvedInclude,
+    YamlConfigLoader,
+    load_yaml_compose,
+    load_yaml_dispatch,
+    load_yaml_file,
+)
+
+
+@pytest.fixture(params=["compose", "dispatch", "facade-include", "facade-stream"])
+def compose_stream(request: pytest.FixtureRequest) -> Callable[[str], object]:
+    if request.param == "compose":
+        return lambda text: load_yaml_compose(StringIO(text))
+    if request.param == "dispatch":
+        return lambda text: load_yaml_dispatch(StringIO("%LOADER YamlCompose\n---\n" + text))
+    loader = YamlConfigLoader()
+    if request.param == "facade-include":
+        return lambda text: loader.load_include(StringIO(text))
+    return lambda text: loader.load_stream(StringIO("%LOADER YamlCompose\n---\n" + text))
+
+
+@pytest.mark.parametrize(
+    ("document", "expected"),
+    [
+        pytest.param("", None, id="empty"),
+        pytest.param(
+            "items: [before, !spread [[one, two]], after]\n",
+            {"items": ["before", "one", "two", "after"]},
+            id="inline-spread",
+        ),
+        pytest.param(
+            "shared: &shared [one, [nested], one]\nitems: [before, !spread [*shared], after]\n",
+            {"shared": ["one", ["nested"], "one"], "items": ["before", "one", ["nested"], "one", "after"]},
+            id="anchor-spread",
+        ),
+        pytest.param(
+            "base: &base {service: {host: localhost, port: 8080}, enabled: true}\n"
+            "config:\n  <<: *base\n  service: {port: 9000}\n  enabled: !delete\n",
+            {
+                "base": {"service": {"host": "localhost", "port": 8080}, "enabled": True},
+                "config": {"service": {"port": 9000}},
+            },
+            id="shallow-overlay",
+        ),
+        pytest.param(
+            "base: &base {service: {host: localhost, port: 8080}, settings: {old: 1}, obsolete: true}\n"
+            "config:\n"
+            "  <<<: *base\n"
+            "  service: {port: 9000}\n"
+            "  settings: !replace {new: 2}\n"
+            "  obsolete: !delete\n",
+            {
+                "base": {"service": {"host": "localhost", "port": 8080}, "settings": {"old": 1}, "obsolete": True},
+                "config": {"service": {"host": "localhost", "port": 9000}, "settings": {"new": 2}},
+            },
+            id="deep-overlay-delete-replace",
+        ),
+    ],
+)
+def test_source_free_composition_needs_no_roots(
+    compose_stream: Callable[[str], object], document: str, expected: object
+) -> None:
+    assert compose_stream(document) == expected
+
+
+@pytest.mark.parametrize(
+    "document",
+    [
+        "value: !include base.yaml\n",
+        "<<<: !include base.yaml\n",
+        "items: [!spread [!include items.yaml]]\n",
+        "<<<: {}\nvalue: !replace [!include mapping.yaml]\n",
+    ],
+)
+def test_include_requires_roots_before_calling_a_resolver(document: str) -> None:
+    class UnexpectedResolver:
+        def resolve(self, request: IncludeRequest) -> ResolvedInclude:
+            raise AssertionError(f"resolver called for {request.name!r} without allowed roots")
+
+    with pytest.raises(ConstructorError, match="requires at least one allowed root") as raised:
+        load_yaml_compose(StringIO(document), include_resolver=UnexpectedResolver())
+    assert raised.value.problem_mark is not None
+    assert raised.value.problem_mark.name == "<yaml stream>"
+
+
+def test_empty_allowed_roots_disable_includes_without_disabling_composition(test_path: Path) -> None:
+    config = write_yaml(test_path, "config.yaml", "%LOADER YamlCompose\n---\nitems: [!spread [[one, two]]]\n")
+    assert load_yaml_file(config, allowed_roots=[]) == {"items": ["one", "two"]}
+
+    write_yaml(test_path, "base.yaml", "value: 1\n")
+    config.write_text("%LOADER YamlCompose\n---\nvalue: !include base.yaml\n", encoding="utf-8")
+    with pytest.raises(ConstructorError, match="requires at least one allowed root") as raised:
+        load_yaml_file(config, allowed_roots=[])
+    assert raised.value.problem_mark is not None
+    assert raised.value.problem_mark.line == 2
 
 
 def write_yaml(root: Path, name: str, contents: str) -> Path:
