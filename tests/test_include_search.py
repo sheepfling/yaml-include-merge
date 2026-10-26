@@ -211,9 +211,7 @@ def test_absolute_include_is_rejected_before_custom_resolver(test_path: Path) ->
         test_path, "main.yaml", f"%LOADER YamlCompose\n---\n!include {value.as_posix()}\n"
     )
     with pytest.raises(yaml.YAMLError, match="include paths must be relative paths"):
-        load_yaml_file(
-            config, include_resolver=UnexpectedResolver(), allow_absolute_includes=False
-        )
+        load_yaml_file(config, include_resolver=UnexpectedResolver(), allow_absolute_includes=False)
 
 
 def test_disallowing_absolute_paths_keeps_parent_paths_within_allowed_roots(
@@ -224,9 +222,9 @@ def test_disallowing_absolute_paths_keeps_parent_paths_within_allowed_roots(
         test_path, "app/main.yaml", "%LOADER YamlCompose\n---\n!include ../shared.yaml\n"
     )
 
-    assert load_yaml_file(
-        config, allowed_roots=[test_path], allow_absolute_includes=False
-    ) == "inside"
+    assert (
+        load_yaml_file(config, allowed_roots=[test_path], allow_absolute_includes=False) == "inside"
+    )
     with pytest.raises(yaml.YAMLError, match="outside the allowed roots"):
         load_yaml_file(config, allow_absolute_includes=False)
 
