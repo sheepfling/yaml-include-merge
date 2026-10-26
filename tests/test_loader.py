@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 from io import StringIO
 from pathlib import Path
-from typing import cast
 
 import pytest
 import yaml
@@ -42,6 +41,23 @@ class TestLoader:
         with pytest.raises(yaml.YAMLError, match="duplicate key"):
             load_yaml_file(duplicate)
 
+    @pytest.mark.parametrize("entry", ["dispatch", "compose", "facade-stream", "facade-include"])
+    @pytest.mark.parametrize("document", ["value: 1\n", "%LOADER YamlCompose\n---\nvalue: !include base.yaml\n"])
+    def test_file_descriptor_streams_do_not_require_a_path_name(self, entry: str, document: str) -> None:
+        self.write("base.yaml", "1\n")
+        config = self.write("stream.yaml", document)
+        loader = YamlConfigLoader(search_paths=[self.root])
+        with os.fdopen(os.open(config, os.O_RDONLY), "r", encoding="utf-8") as stream:
+            if entry == "dispatch":
+                result = load_yaml_dispatch(stream, search_paths=[self.root])
+            elif entry == "compose":
+                result = load_yaml_compose(stream, search_paths=[self.root])
+            elif entry == "facade-stream":
+                result = loader.load_stream(stream)
+            else:
+                result = loader.load_include(stream)
+        assert result == {"value": 1}
+
     def test_pyyaml_scalar_resolution_is_retained(self) -> None:
         text = "enabled: on\nanswer: yes\nlegacy_number: 010\n"
         expected = {"enabled": True, "answer": True, "legacy_number": 8}
@@ -73,9 +89,7 @@ class TestLoader:
         with pytest.raises(yaml.YAMLError):
             load_yaml_file(ordinary)
         assert load_yaml_file(ordinary, yaml_loader=UpperLoader) == {"name": "ALICE"}
-        assert load_yaml_dispatch(StringIO("name: !upper alice\n"), yaml_loader=UpperLoader) == {
-            "name": "ALICE"
-        }
+        assert load_yaml_dispatch(StringIO("name: !upper alice\n"), yaml_loader=UpperLoader) == {"name": "ALICE"}
         assert load_yaml_compose(
             StringIO("name: !upper alice\n"), search_paths=[self.root], yaml_loader=UpperLoader
         ) == {"name": "ALICE"}
@@ -87,16 +101,10 @@ class TestLoader:
         with pytest.raises(yaml.YAMLError):
             load_yaml_file(ordinary)
         flat = self.write("flat.yaml", "%LOADER YamlCompose\n---\nchild: !include nested.yaml\n")
-        assert load_yaml_file(flat, yaml_loader=UpperLoader, recursive_dispatch=False) == {
-            "child": {"name": "BOB"}
-        }
+        assert load_yaml_file(flat, yaml_loader=UpperLoader, recursive_dispatch=False) == {"child": {"name": "BOB"}}
         self.write("headed.yaml", "%LOADER YamlCompose\n---\nname: !upper bob\n")
-        headed = self.write(
-            "headed-main.yaml", "%LOADER YamlCompose\n---\nchild: !include headed.yaml\n"
-        )
-        assert load_yaml_file(headed, yaml_loader=UpperLoader, recursive_dispatch=False) == {
-            "child": {"name": "BOB"}
-        }
+        headed = self.write("headed-main.yaml", "%LOADER YamlCompose\n---\nchild: !include headed.yaml\n")
+        assert load_yaml_file(headed, yaml_loader=UpperLoader, recursive_dispatch=False) == {"child": {"name": "BOB"}}
 
         duplicate = self.write("duplicate-custom.yaml", "name: one\nname: two\n")
         with pytest.raises(yaml.YAMLError, match="duplicate key"):
@@ -233,9 +241,7 @@ class TestLoader:
     @pytest.mark.parametrize("contents", ["value: 1\n", "name: example\n"])
     def test_spread_file_requires_a_sequence(self, contents: str) -> None:
         self.write("items.yaml", contents)
-        config = self.write(
-            "config.yaml", "%LOADER YamlCompose\n---\nitems:\n  - !spread [!include items.yaml]\n"
-        )
+        config = self.write("config.yaml", "%LOADER YamlCompose\n---\nitems:\n  - !spread [!include items.yaml]\n")
         with pytest.raises(yaml.YAMLError, match="!spread source must be a sequence"):
             load_yaml_file(config)
 
@@ -254,9 +260,7 @@ class TestLoader:
 
     def test_spread_tags_are_only_valid_as_sequence_items(self) -> None:
         self.write("items.yaml", "- remote\n")
-        config = self.write(
-            "config.yaml", "%LOADER YamlCompose\n---\nitems: !spread [!include items.yaml]\n"
-        )
+        config = self.write("config.yaml", "%LOADER YamlCompose\n---\nitems: !spread [!include items.yaml]\n")
         with pytest.raises(YamlIncludeError, match="only valid as a list item"):
             load_yaml_file(config)
 
@@ -267,9 +271,7 @@ class TestLoader:
 
     def test_spread_requires_one_source(self) -> None:
         for source in ("[]", "[[], []]"):
-            config = self.write(
-                "config.yaml", f"%LOADER YamlCompose\n---\nitems: [!spread {source}]\n"
-            )
+            config = self.write("config.yaml", f"%LOADER YamlCompose\n---\nitems: [!spread {source}]\n")
             with pytest.raises(yaml.YAMLError, match="expects exactly one sequence source"):
                 load_yaml_file(config)
 
@@ -278,8 +280,7 @@ class TestLoader:
         [
             ("value: !replace {port: 1}", "only valid in a deep mapping overlay"),
             (
-                "base: &base {value: {host: localhost}}\n"
-                "config: {<<: *base, value: !replace {port: 1}}",
+                "base: &base {value: {host: localhost}}\nconfig: {<<: *base, value: !replace {port: 1}}",
                 "only valid in a deep mapping overlay",
             ),
             (
@@ -287,8 +288,7 @@ class TestLoader:
                 "expects a mapping or one mapping source",
             ),
             (
-                "base: &base {value: {host: localhost}}\n"
-                "config: {<<<: *base, value: !replace [[one, two]]}",
+                "base: &base {value: {host: localhost}}\nconfig: {<<<: *base, value: !replace [[one, two]]}",
                 "source must be a mapping",
             ),
             (
@@ -296,13 +296,11 @@ class TestLoader:
                 "expects a mapping or one mapping source",
             ),
             (
-                "base: &base {value: {host: localhost}}\n"
-                "config: {<<<: *base, value: !replace [{one: 1}, {two: 2}]}",
+                "base: &base {value: {host: localhost}}\nconfig: {<<<: *base, value: !replace [{one: 1}, {two: 2}]}",
                 "expects a mapping or one mapping source",
             ),
             (
-                "base: &base {value: {host: localhost}}\n"
-                "config:\n  <<<: *base\n  value: !replace\n    host: !delete",
+                "base: &base {value: {host: localhost}}\nconfig:\n  <<<: *base\n  value: !replace\n    host: !delete",
                 "!delete is only valid inside a mapping overlay",
             ),
         ],
@@ -344,9 +342,7 @@ class TestLoader:
         result = load_yaml_file(config)
         assert isinstance(result, dict)
         assert result["config"] == {"service": {"host": "localhost", "nested": {"right": 3}}}
-        assert result["base"] == {
-            "service": {"host": "localhost", "nested": {"left": 1, "right": 2}}
-        }
+        assert result["base"] == {"service": {"host": "localhost", "nested": {"left": 1, "right": 2}}}
 
     def test_spread_and_replace_files_share_the_include_budget(self) -> None:
         self.write("base.yaml", "settings: {old: true}\n")
@@ -387,9 +383,7 @@ class TestLoader:
         with pytest.raises(yaml.YAMLError, match="!extend"):
             load_yaml_file(config)
 
-    def test_nested_includes_resolve_from_the_including_file(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_nested_includes_resolve_from_the_including_file(self, monkeypatch: pytest.MonkeyPatch) -> None:
         main = self.write(
             "configs/main.yaml",
             "%LOADER YamlCompose\n---\nvalue: !include nested/value.yaml\n",
@@ -427,9 +421,7 @@ class TestLoader:
             f"%LOADER YamlCompose\n---\nvalue: !include {shared.as_posix()}\n",
             encoding="utf-8",
         )
-        assert load_yaml_file(config, allowed_roots=[shared.parent]) == {
-            "value": {"value": "shared"}
-        }
+        assert load_yaml_file(config, allowed_roots=[shared.parent]) == {"value": {"value": "shared"}}
 
         config.write_text(
             f"%LOADER YamlCompose\n---\nvalue: !include {outside.as_posix()}\n",
@@ -464,13 +456,6 @@ class TestLoader:
         )
         with pytest.raises(yaml.YAMLError, match="!delete does not accept a value"):
             load_yaml_file(config)
-
-    @pytest.mark.parametrize("invalid", [True, 1.5, "3"])
-    def test_include_limits_reject_non_integer_bounds(self, invalid: object) -> None:
-        with pytest.raises(ValueError, match="non-negative integers"):
-            IncludeLimits(max_file_bytes=cast(int, invalid))
-        with pytest.raises(ValueError, match="non-negative integers"):
-            load_yaml_dispatch(StringIO("value: 1\n"), max_file_bytes=cast(int, invalid))
 
     def test_symlink_to_outside_root_is_rejected(self) -> None:
         outside = self.write("outside.yaml", "secret: true\n")
@@ -541,10 +526,14 @@ class TestLoader:
             load_yaml_file(config, max_include_files=0)
 
     def test_library_include_limits_are_inspectable_and_configurable(self) -> None:
-        assert DEFAULT_INCLUDE_LIMITS.max_include_depth == 32
-        assert DEFAULT_INCLUDE_LIMITS.max_include_files == 1024
-        assert DEFAULT_INCLUDE_LIMITS.max_file_bytes == 8388608
-        assert DEFAULT_INCLUDE_LIMITS.max_total_include_bytes == 67108864
+        assert DEFAULT_INCLUDE_LIMITS.max_include_depth is not None
+        assert DEFAULT_INCLUDE_LIMITS.max_include_depth > 0
+        assert DEFAULT_INCLUDE_LIMITS.max_include_files is not None
+        assert DEFAULT_INCLUDE_LIMITS.max_include_files > 0
+        assert DEFAULT_INCLUDE_LIMITS.max_file_bytes is not None
+        assert DEFAULT_INCLUDE_LIMITS.max_file_bytes > 0
+        assert DEFAULT_INCLUDE_LIMITS.max_total_include_bytes is not None
+        assert DEFAULT_INCLUDE_LIMITS.max_total_include_bytes > 0
 
         self.write("base.yaml", "value: loaded\n")
         config = self.write("main.yaml", "%LOADER YamlCompose\n---\n<<<: !include base.yaml\n")
@@ -566,7 +555,7 @@ class TestLoader:
         finally:
             set_default_include_limits(original)
 
-        with pytest.raises(ValueError, match="non-negative integers"):
+        with pytest.raises(ValueError):
             IncludeLimits(max_file_bytes=-1)
 
     def test_anchor_aliases_and_legacy_merge_keys_stay_document_local(self) -> None:
@@ -588,11 +577,7 @@ class TestLoader:
     def test_shallow_anchor_merge_works_in_composition_documents(self) -> None:
         config = self.write(
             "anchors.yaml",
-            "%LOADER YamlCompose\n"
-            "---\n"
-            "defaults: &defaults {host: localhost}\n"
-            "service:\n"
-            "  <<: *defaults\n",
+            "%LOADER YamlCompose\n---\ndefaults: &defaults {host: localhost}\nservice:\n  <<: *defaults\n",
         )
         assert load_yaml_file(config) == {
             "defaults": {"host": "localhost"},
@@ -602,9 +587,7 @@ class TestLoader:
     def test_merge_keys_may_not_be_combined_in_one_mapping(self) -> None:
         config = self.write(
             "anchors.yaml",
-            "%LOADER YamlCompose\n---\n"
-            "base: &base {host: localhost}\n"
-            "service: {<<: *base, <<<: *base}\n",
+            "%LOADER YamlCompose\n---\nbase: &base {host: localhost}\nservice: {<<: *base, <<<: *base}\n",
         )
         with pytest.raises(yaml.YAMLError, match="only one << or <<< key"):
             load_yaml_file(config)

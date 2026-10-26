@@ -20,13 +20,9 @@ def load_example() -> dict[Hashable, object]:
     resolver = MemoryIncludeResolver(
         root,
         {
-            "configs/shared/base.yaml": (
-                "service:\n  host: localhost\n  port: 8000\n  labels: [base]\n"
-            ),
+            "configs/shared/base.yaml": ("service:\n  host: localhost\n  port: 8000\n  labels: [base]\n"),
             "configs/environments/production.yaml": (
-                "%LOADER YamlCompose\n---\n"
-                "<<<: !include ../shared/base.yaml\n"
-                "service:\n  port: 8081\n"
+                "%LOADER YamlCompose\n---\n<<<: !include ../shared/base.yaml\nservice:\n  port: 8081\n"
             ),
         },
     )

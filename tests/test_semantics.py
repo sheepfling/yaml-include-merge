@@ -27,14 +27,11 @@ def test_include_loads_a_file_as_a_value(test_path: Path) -> None:
 
 
 def test_mapping_overlay_injects_and_deep_merges_a_config(test_path: Path) -> None:
-    write_yaml(
-        test_path, "defaults.yaml", "service:\n  host: localhost\n  port: 8080\nretries: 3\n"
-    )
+    write_yaml(test_path, "defaults.yaml", "service:\n  host: localhost\n  port: 8080\nretries: 3\n")
     config = write_yaml(
         test_path,
         "production.yaml",
-        "%LOADER YamlCompose\n---\n"
-        "<<<: !include defaults.yaml\nservice:\n  host: app.example.com\n",
+        "%LOADER YamlCompose\n---\n<<<: !include defaults.yaml\nservice:\n  host: app.example.com\n",
     )
 
     assert load_yaml_file(config) == {
@@ -44,9 +41,7 @@ def test_mapping_overlay_injects_and_deep_merges_a_config(test_path: Path) -> No
 
 
 def test_shallow_and_deep_merges_accept_anchors_and_files(test_path: Path) -> None:
-    write_yaml(
-        test_path, "defaults.yaml", "service: {host: localhost, port: 8080}\nenabled: true\n"
-    )
+    write_yaml(test_path, "defaults.yaml", "service: {host: localhost, port: 8080}\nenabled: true\n")
     config = write_yaml(
         test_path,
         "config.yaml",
@@ -105,9 +100,7 @@ def test_ordinary_yaml_merge_list_keeps_pyyaml_precedence(test_path: Path) -> No
     config = write_yaml(
         test_path,
         "ordinary.yaml",
-        "first: &first {flavor: first}\n"
-        "later: &later {flavor: later}\n"
-        "merged: {<<: [*first, *later]}\n",
+        "first: &first {flavor: first}\nlater: &later {flavor: later}\nmerged: {<<: [*first, *later]}\n",
     )
 
     assert load_yaml_file(config) == {
@@ -166,8 +159,7 @@ def test_null_keeps_a_key_while_delete_removes_it(test_path: Path) -> None:
     config = write_yaml(
         test_path,
         "config.yaml",
-        "%LOADER YamlCompose\n---\n"
-        "<<<: !include base.yaml\nclear: null\nremove: !delete\nmissing: !delete\n",
+        "%LOADER YamlCompose\n---\n<<<: !include base.yaml\nclear: null\nremove: !delete\nmissing: !delete\n",
     )
 
     assert load_yaml_file(config) == {"clear": None, "keep": "value"}
@@ -177,9 +169,7 @@ def test_delete_also_removes_an_inherited_key_in_a_shallow_merge(test_path: Path
     config = write_yaml(
         test_path,
         "config.yaml",
-        "%LOADER YamlCompose\n---\n"
-        "base: &base {keep: value, remove: old}\n"
-        "local:\n  <<: *base\n  remove: !delete\n",
+        "%LOADER YamlCompose\n---\nbase: &base {keep: value, remove: old}\nlocal:\n  <<: *base\n  remove: !delete\n",
     )
 
     assert load_yaml_file(config) == {
@@ -209,8 +199,7 @@ def test_delete_in_a_deep_nested_overlay_removes_only_that_key(test_path: Path) 
         "orphan: !delete",
         "items:\n  - !delete",
         "service:\n  token: !delete",
-        "base: &base {service: {host: localhost, token: secret}}\n"
-        "local:\n  <<: *base\n  service:\n    token: !delete",
+        "base: &base {service: {host: localhost, token: secret}}\nlocal:\n  <<: *base\n  service:\n    token: !delete",
     ],
 )
 def test_delete_requires_a_mapping_overlay_at_its_own_level(test_path: Path, document: str) -> None:
@@ -301,8 +290,7 @@ def test_spread_inserts_an_included_sequence_without_an_overlay(test_path: Path)
     config = write_yaml(
         test_path,
         "config.yaml",
-        "%LOADER YamlCompose\n---\n"
-        "items:\n  - before\n  - !spread [!include extra.yaml]\n  - after\n",
+        "%LOADER YamlCompose\n---\nitems:\n  - before\n  - !spread [!include extra.yaml]\n  - after\n",
     )
 
     assert load_yaml_file(config) == {"items": ["before", "remote-a", "remote-b", "after"]}

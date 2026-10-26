@@ -19,10 +19,9 @@ def read_bounded(stream: BinaryIO, limit: int | None, max_chunk_size: int | None
     """
     content = bytearray()
     remaining = limit
-    if max_chunk_size is None or max_chunk_size < 1:
-        max_chunk_size = _DEFAULT_MAX_CHUNK_SIZE
+    chunk_size = _DEFAULT_MAX_CHUNK_SIZE if (max_chunk_size is None or max_chunk_size < 1) else max_chunk_size
     while remaining is None or remaining > 0:
-        requested = min(remaining, max_chunk_size) if remaining is not None else max_chunk_size
+        requested = min(remaining, chunk_size) if remaining is not None else chunk_size
         chunk = _read_binary_chunk(stream, requested)
         if not isinstance(chunk, bytes):
             if chunk is None:

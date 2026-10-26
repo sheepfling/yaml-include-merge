@@ -1,6 +1,7 @@
 """Load an included file with an application-defined PyYAML tag."""
 
 from pathlib import Path
+from pprint import pprint
 
 import yaml
 
@@ -31,4 +32,4 @@ def load_example() -> object:
 if __name__ == "__main__":
     result = load_example()
     assert result == {"profile": {"name": "ALICE"}}
-    print(result)
+    pprint(result)

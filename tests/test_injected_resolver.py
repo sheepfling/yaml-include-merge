@@ -91,9 +91,7 @@ class TestInjectedResolver:
             }
         )
         result = loader.load_stream(
-            StringIO(
-                "%LOADER YamlCompose\n---\n<<<: !include env/base.yaml\nservice:\n  port: 8081\n"
-            ),
+            StringIO("%LOADER YamlCompose\n---\n<<<: !include env/base.yaml\nservice:\n  port: 8081\n"),
             source=self.main_source(),
         )
         assert result == {"service": {"host": "localhost", "port": 8081}}
@@ -111,13 +109,9 @@ class TestInjectedResolver:
     def test_memory_resolver_rejects_root_escape_and_missing_include(self) -> None:
         loader = self.loader({"base.yaml": "ok: true\n"})
         with pytest.raises(yaml.YAMLError, match="escapes its namespace root"):
-            loader.load_include(
-                StringIO("value: !include ../secret.yaml\n"), source=self.main_source()
-            )
+            loader.load_include(StringIO("value: !include ../secret.yaml\n"), source=self.main_source())
         with pytest.raises(yaml.YAMLError, match="was not found"):
-            loader.load_include(
-                StringIO("value: !include absent.yaml\n"), source=self.main_source()
-            )
+            loader.load_include(StringIO("value: !include absent.yaml\n"), source=self.main_source())
         with pytest.raises(yaml.YAMLError, match="URI or drive paths"):
             loader.load_include(
                 StringIO("value: !include https://example.invalid/base.yaml\n"),
@@ -279,22 +273,18 @@ class TestInjectedResolver:
         with pytest.raises(yaml.YAMLError, match="duplicate key"):
             duplicate.load_include(StringIO("<<<: !include base.yaml\n"), source=self.main_source())
 
-        unsafe = self.loader(
-            {"base.yaml": 'value: !!python/object/apply:os.system ["echo unsafe"]\n'}
-        )
+        unsafe = self.loader({"base.yaml": 'value: !!python/object/apply:os.system ["echo unsafe"]\n'})
         with pytest.raises(yaml.YAMLError):
             unsafe.load_include(StringIO("<<<: !include base.yaml\n"), source=self.main_source())
 
     def test_reused_configured_loader_gets_a_fresh_budget_per_call(self) -> None:
         loader = self.loader({"base.yaml": "value: 1\n"}, max_include_files=1)
         for _ in range(2):
-            assert loader.load_include(
-                StringIO("value: !include base.yaml\n"), source=self.main_source()
-            ) == {"value": {"value": 1}}
+            assert loader.load_include(StringIO("value: !include base.yaml\n"), source=self.main_source()) == {
+                "value": {"value": 1}
+            }
 
-    def test_reused_configured_loader_preserves_default_filesystem_lookup(
-        self, test_path: Path
-    ) -> None:
+    def test_reused_configured_loader_preserves_default_filesystem_lookup(self, test_path: Path) -> None:
         (test_path / "base.yaml").write_text("value: 1\n", encoding="utf-8")
         config = test_path / "main.yaml"
         config.write_text("%LOADER YamlCompose\n---\n<<<: !include base.yaml\n", encoding="utf-8")
@@ -304,9 +294,7 @@ class TestInjectedResolver:
 
     def test_memory_source_cannot_be_used_with_an_unconfigured_filesystem_resolver(self) -> None:
         loader = YamlConfigLoader(allowed_roots=[self.root])
-        with pytest.raises(
-            yaml.YAMLError, match="filesystem resolver cannot resolve relative to a memory source"
-        ):
+        with pytest.raises(yaml.YAMLError, match="filesystem resolver cannot resolve relative to a memory source"):
             loader.load_include(StringIO("value: !include base.yaml\n"), source=self.main_source())
 
     def test_custom_resolver_cannot_escape_file_roots_before_opening(self, test_path: Path) -> None:

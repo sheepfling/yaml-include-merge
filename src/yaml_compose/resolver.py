@@ -156,7 +156,7 @@ def validate_include_name(name: str, *, allow_absolute: bool = False) -> None:
         raise ValueError("include paths must be relative paths")
 
 
-class FileSystemIncludeResolver:
+class FileSystemIncludeResolver(IncludeResolver):
     """Resolve local files within the request's allowed filesystem roots.
 
     The candidate is canonicalized before the root check, so symlinks cannot
@@ -175,9 +175,7 @@ class FileSystemIncludeResolver:
         if isinstance(request.including, MemorySource):
             raise ValueError("filesystem resolver cannot resolve relative to a memory source")
         roots = tuple(root.path for root in request.allowed_roots if isinstance(root, FileRoot))
-        search_paths = tuple(
-            root.path for root in request.search_paths if isinstance(root, FileRoot)
-        )
+        search_paths = tuple(root.path for root in request.search_paths if isinstance(root, FileRoot))
         if not roots:
             raise ValueError("filesystem include loading requires an allowed filesystem root")
         if any(not isinstance(root, FileRoot) for root in request.allowed_roots):
@@ -192,7 +190,7 @@ class FileSystemIncludeResolver:
         return ResolvedInclude(FileSource(path), lambda: path.open("rb"))
 
 
-class MemoryIncludeResolver:
+class MemoryIncludeResolver(IncludeResolver):
     """Resolve files from a mapping for tests and explicitly in-memory configs.
 
     Keys are POSIX-style paths relative to ``root``. String values are encoded
@@ -212,9 +210,7 @@ class MemoryIncludeResolver:
         normalized: dict[str, bytes] = {}
         for name, content in files.items():
             key = self._normalize_path(PurePosixPath(name))
-            normalized[key.as_posix()] = (
-                content.encode("utf-8") if isinstance(content, str) else bytes(content)
-            )
+            normalized[key.as_posix()] = content.encode("utf-8") if isinstance(content, str) else bytes(content)
         self._files = normalized
 
     @staticmethod

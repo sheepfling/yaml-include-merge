@@ -12,15 +12,15 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Literal
 
+from scripts import repository_root
+
 PYTHON_PATHS = ("src", "examples", "scripts", "tests")
 Mode = Literal["all", "python", "tests", "quality"]
 
 
 def _rumdl_command() -> str:
     """Find rumdl in the active Python environment, including Windows Scripts."""
-    environment_path = os.pathsep.join(
-        (str(Path(sys.executable).parent), os.environ.get("PATH", ""))
-    )
+    environment_path = os.pathsep.join((str(Path(sys.executable).parent), os.environ.get("PATH", "")))
     executable = shutil.which("rumdl", path=environment_path)
     if executable is not None:
         return executable
@@ -29,15 +29,13 @@ def _rumdl_command() -> str:
         if sibling.exists():
             return str(sibling)
     raise FileNotFoundError(
-        "rumdl is not installed; install development dependencies with "
-        '`python -m pip install -e ".[dev]"`'
+        'rumdl is not installed; install development dependencies with `python -m pip install -e ".[dev]"`'
     )
 
 
 def _commands(
     python: str,
     rumdl: str,
-    dist: Path,
     *,
     mode: Mode,
     fix: bool,
@@ -70,25 +68,7 @@ def _commands(
             (python, "-m", "pre_commit", "validate-config", ".pre-commit-config.yaml"),
         ),
         ("pre-commit hooks", (python, "-m", "pre_commit", "run", "--all-files")),
-        (
-            "package build",
-            (
-                python,
-                "-m",
-                "build",
-                "--no-isolation",
-                "--quiet",
-                "--sdist",
-                "--wheel",
-                "--outdir",
-                str(dist),
-            ),
-        ),
-        (
-            "package contents",
-            (python, "-m", "scripts.check_artifacts", "--dist-dir", str(dist)),
-        ),
-        ("distribution metadata", (python, "-m", "twine", "check")),
+        ("package build and validation", (python, "-m", "scripts.check_build")),
     ]
     fixes: list[tuple[str, tuple[str, ...]]] = (
         [
@@ -127,7 +107,7 @@ def _run(root: Path, command: tuple[str, ...], environment: dict[str, str]) -> i
     return result.returncode
 
 
-def main(argv: Sequence[str] = ()) -> int:
+def main(argv: Sequence[str] | None = None) -> int:
     """Run all checks locally, or one check group as selected by hosted CI."""
     parser = argparse.ArgumentParser(
         description="Run the same checks locally and in GitHub Actions.",
@@ -170,14 +150,13 @@ def main(argv: Sequence[str] = ()) -> int:
         print(error, file=sys.stderr)
         return 1
 
-    root = Path(__file__).resolve().parents[1]
+    root = repository_root()
     build_root = (root / "build" / "local-checks").resolve()
     if not build_root.is_relative_to(root):
         raise ValueError("local check output must stay inside the repository")
     build_root.mkdir(parents=True, exist_ok=True)
 
     with tempfile.TemporaryDirectory(prefix="run-", dir=build_root) as temporary:
-        dist = Path(temporary) / "dist"
         environment = os.environ.copy()
         environment.update(
             {
@@ -188,10 +167,8 @@ def main(argv: Sequence[str] = ()) -> int:
                 "TMPDIR": temporary,
             }
         )
-        commands = _commands(python, rumdl, dist, mode=mode, fix=args.fix)
+        commands = _commands(python, rumdl, mode=mode, fix=args.fix)
         for name, command in commands:
-            if name == "distribution metadata":
-                command = (*command, *(str(path) for path in sorted(dist.iterdir())))
             result = _run(root, command, environment)
             if result:
                 print(f"Failed check: {name}", file=sys.stderr)
@@ -202,4 +179,4 @@ def main(argv: Sequence[str] = ()) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main(sys.argv[1:]))
+    raise SystemExit(main())

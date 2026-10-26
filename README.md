@@ -329,6 +329,19 @@ By default, the top-level file's directory and configured search paths define th
 roots. You can supply `allowed_roots` explicitly when a configuration needs access to a
 broader or different directory layout.
 
+To reject absolute paths in `!include`, set `allow_absolute_includes=False`:
+
+```python
+loader = YamlConfigLoader(
+    allowed_roots=[Path("config").resolve()],
+    allow_absolute_includes=False,
+)
+```
+
+The option also applies to nested includes. Relative `../` paths remain available only
+when their resolved target stays within an allowed root. Absolute paths are allowed by
+default for compatibility; allowed roots constrain them in either mode.
+
 These boundaries also apply after resolving symlinks. A file found outside an allowed root
 is an error, not a reason to silently try the next candidate.
 
@@ -405,7 +418,7 @@ A few boundaries are worth knowing:
 
 For details on the grammar, operators, and implementation choices, see the [design notes](docs/design-notes.md).
 
-Use an immutable `IncludeLimits` profile to share bounds across loads. Pass it to
+Use an `IncludeLimits` profile to share bounds across loads. Pass it to
 `YamlConfigLoader` or to `load_yaml_file`, `load_yaml_dispatch`, or `load_yaml_compose`:
 
 ```python
@@ -417,8 +430,10 @@ loader = YamlConfigLoader(include_limits=profile)
 
 `DEFAULT_INCLUDE_LIMITS` exposes the package baseline. `set_default_include_limits` can
 change the process-wide defaults for new loads; each loader captures its limits when it is
-created. Existing `max_*` arguments override only their corresponding profile fields, and
-an explicit `None` leaves that bound unlimited.
+created. The process-wide defaults are kept as a separate copy of the baseline. A loader's
+`include_limits` profile can be adjusted for its later loads. Existing `max_*` arguments
+override only their corresponding profile fields, and an explicit `None` leaves that bound
+unlimited.
 
 File and byte budgets count repeated includes of the same file, including includes used
 by `!spread` or `!replace`. Budgets reset for each top-level load. The top-level input
@@ -458,8 +473,8 @@ branch coverage (at least 80%). Test discovery includes both the simple examples
 nested composition, search policy, overlay, and spread tests.
 
 A separate Python 3.14 job runs `python -m scripts.ci --quality-only` for Markdown lint,
-repository policy, pre-commit hooks, package builds, archive contents, and distribution
-metadata, as well as Python quality checks. A full local run covers both groups with the
+repository policy, pre-commit hooks, package builds, and Twine validation, as well as
+Python quality checks. A full local run covers both groups with the
 active interpreter. Add `--fix` to apply safe Ruff, rumdl, and mdrepo fixes before checking.
 
 To run the Python checks alone, including on Python 3.10, install the smaller extras:
@@ -492,7 +507,7 @@ The original loader and ongoing package development are credited to `sheepfling`
 `yaml-compose` is distributed under the [MIT license](LICENSE).
 
 See the [changelog](CHANGELOG.md) for release notes and the [release guide](docs/releasing.md)
-for the v0.1.0 preparation and publishing process.
+for the publishing process.
 
 ---
 

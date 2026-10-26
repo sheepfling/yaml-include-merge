@@ -1,6 +1,7 @@
 """Compare local and shared sources without changing merge or spread semantics."""
 
 from pathlib import Path
+from pprint import pprint
 
 from yaml_compose import IncludeSearch, YamlConfigLoader
 
@@ -13,5 +14,7 @@ def load_example(include_search: IncludeSearch = "local-first") -> object:
 
 
 if __name__ == "__main__":
-    print("local-first:", load_example())
-    print("search-first:", load_example("search-first"))
+    print("local-first:")
+    pprint(load_example())
+    print("search-first:")
+    pprint(load_example("search-first"))
