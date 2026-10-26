@@ -411,8 +411,7 @@ A few boundaries are worth knowing:
   document. Included files use composition by default; `recursive_dispatch=False` changes
   how nested files are parsed.
 - **Includes are bounded.** Configurable limits constrain include depth, file count, file
-  size, and total included bytes. Defaults are 32 levels, 1,024 file reads, 8 MiB per
-  file, and 64 MiB total. Each bound accepts `None` to leave that resource unlimited.
+  size, and total included bytes. Each bound accepts `None` to leave that resource unlimited.
 - **Errors retain context.** YAML errors preserve source locations, while include failures
   identify the reference and the failed path or resolution policy.
 - **Output is data, not an editable document tree.** Comments, formatting, and per-key
