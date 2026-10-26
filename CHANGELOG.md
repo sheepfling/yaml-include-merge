@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.1 (unreleased)
+
+- `!include` parses resolved `.json` sources as strict JSON and `.toml` sources
+  as TOML. JSON duplicate keys and non-finite values are rejected; TOML keeps
+  native Python date and time values. Python 3.10 installs use the `tomli` parser.
+
 ## 0.1.0
 
 Initial release of `yaml-compose`, a PyYAML adapter for composing configuration files.

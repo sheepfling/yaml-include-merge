@@ -52,7 +52,7 @@ IncludeRoot = FileRoot | MemoryRoot
 
 @dataclass(frozen=True, slots=True)
 class FileSource:
-    """Identity of one filesystem YAML source.
+    """Identity of one filesystem include source.
 
     ``path`` is resolved by the loader before root and cycle checks.
     """
@@ -62,7 +62,7 @@ class FileSource:
 
 @dataclass(frozen=True, slots=True)
 class MemorySource:
-    """Identity of one file inside a ``MemoryRoot``.
+    """Identity of one YAML, JSON, or TOML file inside a ``MemoryRoot``.
 
     ``path`` is a relative POSIX path within ``root``. Absolute paths, empty
     paths, and parent traversal raise ``ValueError``.

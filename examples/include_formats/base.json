@@ -1,0 +1,12 @@
+{
+  "service": {
+    "host": "shared.example.test",
+    "port": 8080,
+    "labels": ["shared"],
+    "token": "development"
+  },
+  "logging": {
+    "level": "info",
+    "format": "json"
+  }
+}

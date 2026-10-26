@@ -8,13 +8,16 @@ marks so include and mapping errors identify the relevant YAML location.
 
 from __future__ import annotations
 
+import json
+import math
 import os
 import re
 from collections.abc import Callable, Hashable, Iterable
 from dataclasses import dataclass
+from importlib import import_module
 from io import StringIO
 from pathlib import Path
-from typing import NamedTuple, NoReturn, TextIO, cast
+from typing import Literal, NamedTuple, NoReturn, Protocol, TextIO, cast
 
 import yaml
 from yaml import MappingNode, Node, SafeLoader, ScalarNode, SequenceNode
@@ -109,6 +112,82 @@ class _NamedStringIO(StringIO):
     def __init__(self, text: str, name: str) -> None:
         super().__init__(text)
         self.name = name
+
+
+class _TomlParser(Protocol):
+    def loads(self, text: str, /) -> object: ...
+
+
+def _included_format(source: IncludeSource) -> Literal["yaml", "json", "toml"]:
+    """Select an included document format from its resolved source suffix."""
+    suffix = source.path.suffix.lower()
+    if suffix == ".json":
+        return "json"
+    if suffix == ".toml":
+        return "toml"
+    return "yaml"
+
+
+def _unique_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    """Construct a JSON object while rejecting duplicate keys."""
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON object key {key!r}")
+        result[key] = value
+    return result
+
+
+def _finite_json_float(value: str) -> float:
+    """Reject JSON numbers that Python would decode to infinity."""
+    number = float(value)
+    if not math.isfinite(number):
+        raise ValueError(f"non-finite JSON number {value!r} is not supported")
+    return number
+
+
+def _reject_json_constant(value: str) -> NoReturn:
+    """Reject Python's non-standard NaN and Infinity JSON extensions."""
+    raise ValueError(f"non-finite JSON constant {value!r} is not supported")
+
+
+def _load_json(text: str) -> object:
+    """Parse strict JSON values with unique object keys and finite numbers."""
+    return json.loads(
+        text,
+        object_pairs_hook=_unique_json_object,
+        parse_float=_finite_json_float,
+        parse_constant=_reject_json_constant,
+    )
+
+
+def _toml_parser() -> _TomlParser:
+    """Select stdlib TOML support or the declared Python 3.10 compatibility module."""
+    try:
+        return cast(_TomlParser, import_module("tomllib"))
+    except ModuleNotFoundError as exc:
+        if exc.name != "tomllib":
+            raise
+    try:
+        return cast(_TomlParser, import_module("tomli"))
+    except ModuleNotFoundError as exc:
+        raise ImportError("TOML includes on Python before 3.11 require the tomli dependency") from exc
+
+
+def _parse_included_data(text: str, source_name: str, format_name: Literal["json", "toml"], node: Node) -> YamlType:
+    """Parse a non-YAML include and attach failures to its originating YAML tag."""
+    try:
+        if format_name == "json":
+            return cast(YamlType, _load_json(text))
+        return cast(YamlType, _toml_parser().loads(text))
+    except ImportError as exc:
+        _include_error(node, f"cannot parse TOML include source {source_name}: {exc}", exc)
+    except (RecursionError, ValueError) as exc:
+        _include_error(
+            node,
+            f"invalid {format_name.upper()} include source {source_name}: {exc}",
+            exc,
+        )
 
 
 def _read_text_input(stream: TextIO) -> object:
@@ -478,6 +557,9 @@ class IncludeLoader(SafeLoader):
                     f"include source {_include_source_label(include_source)} is not UTF-8 text",
                     exc,
                 )
+            included_format = _included_format(include_source)
+            if included_format != "yaml":
+                return _parse_included_data(text, source_label, included_format, node)
             if self.recursive_dispatch:
                 self.budget.current_depth += 1
                 try:
@@ -719,8 +801,9 @@ def load_yaml_dispatch(
     before calling its resolver; a missing root raises a marked YAML error.
     Streams using only anchors, mapping overlays, and list spreads need no roots
     or search paths. ``load_stack`` seeds cycle and depth tracking.
-    Set ``recursive_dispatch=False`` to parse included files as ordinary YAML
-    with ``yaml_loader`` and without resolving their own include tags.
+    Set ``recursive_dispatch=False`` to parse included YAML files as ordinary
+    YAML with ``yaml_loader`` and without resolving their own include tags.
+    JSON and TOML are still selected from each resolver-returned source suffix.
 
     ``include_search`` controls bare-name lookup: ``local-first`` (the default)
     tries the containing file's directory before the configured search paths;

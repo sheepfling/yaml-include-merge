@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -9,6 +10,7 @@ import yaml
 
 from examples.custom_loader import load_example as load_custom_loader_example
 from examples.in_memory_config import load_example
+from examples.include_formats import load_example as load_include_formats_example
 from examples.include_limits import load_example as load_unbounded_example
 from examples.include_search import load_example as load_search_example
 from examples.load_config import load_examples
@@ -100,6 +102,19 @@ def test_filesystem_example_resolves_all_layers_and_overrides(
 
 def test_in_memory_example_resolves_nested_relative_include() -> None:
     assert load_example() == {"service": {"host": "localhost", "port": 8081, "labels": ["base"]}}
+
+
+def test_json_and_toml_example_has_the_documented_result() -> None:
+    assert load_include_formats_example() == {
+        "service": {"host": "api.example.test", "port": 8080, "labels": ["production"]},
+        "logging": {"level": "info", "format": "json"},
+        "database": {
+            "host": "db.example.test",
+            "port": 5432,
+            "created": datetime(1979, 5, 27, 7, 32, tzinfo=timezone.utc),
+        },
+        "steps": ["prepare", "lint", "test", "deploy"],
+    }
 
 
 def test_custom_loader_example_uses_its_tag_inside_a_nested_include() -> None:

@@ -100,3 +100,10 @@ Composition is enabled by the package header `%LOADER YamlCompose` or by explici
 selecting the composition API. Ordinary YAML keeps the ordinary loader path.
 `SafeLoader` is the default; applications can select another trusted PyYAML loader.
 The result is a Python value, without comments, source formatting, or per-key provenance.
+
+`!include` may also read `.json` and `.toml` sources. Dispatch uses the resolved
+source's suffix: JSON objects and arrays become Python dictionaries and lists;
+TOML tables are dictionaries, arrays are lists, and TOML date/time values remain
+Python `date`, `time`, or `datetime` objects. Other suffixes keep the existing
+YAML parsing behavior. All included formats share the same resolver, allowed
+roots, cycle detection, and resource budgets.

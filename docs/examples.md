@@ -52,6 +52,77 @@ database:
   port: 5432
 ```
 
+## Include JSON and TOML sources
+
+The runnable [`include_formats.yaml`](../examples/include_formats.yaml) example
+uses `<<<` with a JSON object, includes a TOML table as a value, and spreads a
+JSON array into a sequence. Its JSON defaults are:
+
+```json
+{
+  "service": {"host": "shared.example.test", "port": 8080, "labels": ["shared"], "token": "development"},
+  "logging": {"level": "info", "format": "json"}
+}
+```
+
+The TOML value uses standard TOML date-time syntax:
+
+```toml
+host = "db.example.test"
+port = 5432
+created = 1979-05-27T07:32:00Z
+```
+
+The YAML file applies a deep override and spreads the JSON steps:
+
+```yaml
+%LOADER YamlCompose
+---
+<<<: !include ./include_formats/base.json
+database: !include ./include_formats/database.toml
+service:
+  host: api.example.test
+  labels: [production]
+  token: !delete
+steps:
+  - prepare
+  - !spread [!include ./include_formats/steps.json]
+  - deploy
+```
+
+The resulting Python value is:
+
+```python
+{
+    "service": {"host": "api.example.test", "port": 8080, "labels": ["production"]},
+    "logging": {"level": "info", "format": "json"},
+    "database": {
+        "host": "db.example.test",
+        "port": 5432,
+        "created": datetime.datetime(1979, 5, 27, 7, 32, tzinfo=datetime.timezone.utc),
+    },
+    "steps": ["prepare", "lint", "test", "deploy"],
+}
+```
+
+JSON objects, arrays, strings, numbers, booleans, and `null` keep their natural
+Python values. Duplicate JSON object keys and non-finite numbers (`NaN` and
+`Infinity`) are rejected because those constants are outside JSON. TOML date,
+time, and datetime values remain Python
+`date`, `time`, and `datetime` objects, while TOML arrays remain Python lists
+inside the root table. TOML's standard `inf` and `nan` floats remain native
+Python floats. JSON and TOML are selected by the resolved include source's
+`.json` or `.toml` suffix; other suffixes continue to use YAML for compatibility.
+JSON and TOML require UTF-8 text without a byte-order mark (BOM). A BOM is passed
+to the strict format parser and reported as a marked include parse error; it is
+not stripped before parsing.
+Python 3.10 uses the declared `tomli` dependency; Python 3.11 and later use the
+standard-library `tomllib` parser.
+All included formats share the normal source-root, cycle, and resource-limit
+checks. Exact outputs are asserted in
+[`tests/test_examples.py`](../tests/test_examples.py) and parser failures in
+[`tests/test_include_formats.py`](../tests/test_include_formats.py).
+
 ## Three filesystem layers
 
 These files live in `examples/`. The first file provides defaults:

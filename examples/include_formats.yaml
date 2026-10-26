@@ -1,0 +1,15 @@
+%LOADER YamlCompose
+---
+<<<: !include ./include_formats/base.json
+
+database: !include ./include_formats/database.toml
+
+service:
+  host: api.example.test
+  labels: [production]
+  token: !delete
+
+steps:
+  - prepare
+  - !spread [!include ./include_formats/steps.json]
+  - deploy

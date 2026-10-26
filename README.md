@@ -11,7 +11,7 @@ template language.
 `yaml-compose` adds a small set of opt-in composition semantics to YAML:
 
 - **`<<<`** recursively merges mappings, extending YAML's familiar `<<`.
-- **`!include`** brings another YAML file into the document.
+- **`!include`** brings another YAML, JSON, or TOML file into the document.
 - **`!delete`** removes a key during an overlay.
 - **`!replace`** explicitly replaces a mapping instead of merging it.
 - **`!spread`** inserts elements from another sequence.
@@ -83,6 +83,24 @@ config = load_yaml_file("production.yaml")
 
 The `%LOADER YamlCompose` package header opts the document into composition. Ordinary
 YAML files can still be loaded without modification.
+
+## Include JSON and TOML sources
+
+`!include` selects JSON for a resolved `.json` file and TOML for `.toml`; all other
+file suffixes keep the existing YAML behavior. Included JSON objects can be merged
+with `<<<`, JSON arrays can be included or used with `!spread`, and TOML dates and
+times stay as Python `date`, `time`, and `datetime` values. Duplicate JSON object
+keys and non-finite numbers are rejected. Includes in every format use the same
+root checks, cycle tracking, and byte and depth limits.
+JSON and TOML input must be UTF-8 without a byte-order mark (BOM); a BOM is
+reported as a marked include parse error rather than silently removed.
+Python 3.10 uses the declared `tomli` dependency; Python 3.11 and later use the
+standard-library TOML parser.
+
+The runnable [`include_formats.yaml`](examples/include_formats.yaml) example combines
+a JSON defaults object, a TOML database table, and a JSON list spread. Its exact
+result is checked by [`tests/test_examples.py`](tests/test_examples.py); the
+[worked guide](docs/examples.md#include-json-and-toml-sources) shows each source.
 
 ## Composition that reads like YAML
 
