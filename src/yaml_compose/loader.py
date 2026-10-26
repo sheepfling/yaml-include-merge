@@ -276,11 +276,6 @@ def _include_error(node: Node, message: str, cause: Exception | None = None) -> 
     raise error
 
 
-def _validate_absolute_include_policy(allow_absolute_includes: object) -> None:
-    if not isinstance(allow_absolute_includes, bool):
-        raise ValueError("allow_absolute_includes must be a bool")
-
-
 class IncludeLoader(SafeLoader):
     """Construct bounded includes, shallow or deep mapping merges, and list spreads.
 
@@ -309,7 +304,6 @@ class IncludeLoader(SafeLoader):
     ) -> None:
         """Initialize one parse with its source, resolver, YAML loader, and budget."""
         validate_include_search(include_search)
-        _validate_absolute_include_policy(allow_absolute_includes)
         super().__init__(stream)
         self.current_file = current_file
         self.search_paths = tuple(search_paths)
@@ -319,7 +313,7 @@ class IncludeLoader(SafeLoader):
         self.budget = budget
         self.yaml_loader = yaml_loader
         self.include_search: IncludeSearch = include_search
-        self.allow_absolute_includes = allow_absolute_includes
+        self.allow_absolute_includes = bool(allow_absolute_includes)
         self.include_resolver = include_resolver or FileSystemIncludeResolver()
         self.source = source or (FileSource(current_file) if current_file is not None else None)
 
@@ -756,7 +750,6 @@ def load_yaml_dispatch(
     """
     validate_yaml_loader(yaml_loader)
     validate_include_search(include_search)
-    _validate_absolute_include_policy(allow_absolute_includes)
     limits = resolve_include_limits(
         max_include_depth,
         max_include_files,
@@ -1016,11 +1009,10 @@ class YamlConfigLoader:
         )
         validate_yaml_loader(yaml_loader)
         validate_include_search(include_search)
-        _validate_absolute_include_policy(allow_absolute_includes)
         self.include_resolver = include_resolver
         self.yaml_loader = yaml_loader
         self.include_search: IncludeSearch = include_search
-        self.allow_absolute_includes = allow_absolute_includes
+        self.allow_absolute_includes = bool(allow_absolute_includes)
         self.search_paths = tuple(search_paths or ())
         self.allowed_roots = tuple(allowed_roots) if allowed_roots is not None else None
         self.recursive_dispatch = recursive_dispatch

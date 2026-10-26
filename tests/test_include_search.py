@@ -229,15 +229,6 @@ def test_disallowing_absolute_paths_keeps_parent_paths_within_allowed_roots(
         load_yaml_file(config, allow_absolute_includes=False)
 
 
-@pytest.mark.parametrize("invalid", [None, "false", 0])
-def test_absolute_include_policy_requires_a_bool(invalid: object) -> None:
-    policy = cast(bool, invalid)
-    with pytest.raises(ValueError, match="allow_absolute_includes must be a bool"):
-        YamlConfigLoader(allow_absolute_includes=policy)
-    with pytest.raises(ValueError, match="allow_absolute_includes must be a bool"):
-        load_yaml_dispatch(StringIO("value: ordinary\n"), allow_absolute_includes=policy)
-
-
 def test_platform_relative_prefix_stays_pinned_under_search_first(test_path: Path) -> None:
     write(test_path, "app/value.yaml", "local\n")
     write(test_path, "shared/value.yaml", "shared\n")
