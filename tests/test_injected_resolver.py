@@ -18,6 +18,7 @@ from yaml_compose import (
     ResolvedInclude,
     UnsetType,
     YamlConfigLoader,
+    YamlType,
     get_default_include_limits,
     load_yaml_compose,
     set_default_include_limits,
@@ -70,7 +71,7 @@ class TestInjectedResolver:
         max_include_files: int | UnsetType | None = UNSET,
         max_file_bytes: int | UnsetType | None = UNSET,
         max_total_include_bytes: int | UnsetType | None = UNSET,
-    ) -> YamlConfigLoader:
+    ) -> YamlConfigLoader[YamlType]:
         return YamlConfigLoader(
             include_resolver=MemoryIncludeResolver(self.root, files),
             allowed_roots=[self.root],

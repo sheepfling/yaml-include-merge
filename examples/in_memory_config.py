@@ -13,7 +13,6 @@ from yaml_compose import (
 )
 
 
-# opaque-boundary: The example returns dynamically parsed YAML values.
 def load_example() -> dict[Hashable, object]:
     """Resolve a layered YAML document entirely from an in-memory namespace."""
     root = MemoryRoot("demo-config")

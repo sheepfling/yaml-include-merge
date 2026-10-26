@@ -1,7 +1,18 @@
 """Safe YAML loading with file includes and mapping overlays."""
 
+from ._overlays import YamlType
 from ._search import IncludeSearch
 from ._unset import UNSET, UnsetType
+from .formats import (
+    FormatAdapter,
+    FormatDependencyError,
+    FormatDescriptor,
+    FormatInput,
+    FormatParseError,
+    FormatRegistry,
+    FormatSelection,
+    UnknownFormatError,
+)
 from .limits import (
     DEFAULT_INCLUDE_LIMITS,
     IncludeLimits,
@@ -56,6 +67,13 @@ __all__ = (
     "FileRoot",
     "FileSource",
     "FileSystemIncludeResolver",
+    "FormatAdapter",
+    "FormatDependencyError",
+    "FormatDescriptor",
+    "FormatInput",
+    "FormatParseError",
+    "FormatRegistry",
+    "FormatSelection",
     "IncludeLimits",
     "IncludeLoader",
     "IncludeRequest",
@@ -67,9 +85,11 @@ __all__ = (
     "MemoryRoot",
     "MemorySource",
     "ResolvedInclude",
+    "UnknownFormatError",
     "UnsetType",
     "YamlConfigLoader",
     "YamlIncludeError",
+    "YamlType",
     "get_default_include_limits",
     "load_yaml_compose",
     "load_yaml_dispatch",

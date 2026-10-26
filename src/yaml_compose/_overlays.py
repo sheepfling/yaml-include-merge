@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Hashable, Mapping, MutableSet
 from dataclasses import dataclass
-from datetime import date, time
+from datetime import date, datetime, time
 from typing import cast
 
 import yaml
@@ -19,7 +19,9 @@ from yaml.error import Mark
 from .tags import DELETE_TAG, REPLACE_TAG, SPREAD_TAG
 
 YamlDict = dict[Hashable, object]
-YamlType = YamlDict | list[object] | str | int | float | bool | None | date | time
+# Built-in SafeLoader, strict JSON, and TOML values. Mapping and sequence
+# contents stay object-typed so TOML's native date/time values remain valid.
+YamlType = YamlDict | list[object] | str | int | float | bool | None | bytes | date | datetime | time | set[Hashable]
 DELETE = object()
 
 

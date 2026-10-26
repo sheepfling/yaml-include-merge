@@ -150,7 +150,7 @@ def test_include_limit_example_distinguishes_bounded_from_unbounded(
 def test_merge_modes_example_covers_sources_depth_and_replacement(examples_path: Path) -> None:
     result = load_yaml_file(examples_path / "merge_modes.yaml")
     assert isinstance(result, dict)
-    assert set(result) == {
+    assert result.keys() == {
         "defaults",
         "replacement",
         "shallow_anchor",

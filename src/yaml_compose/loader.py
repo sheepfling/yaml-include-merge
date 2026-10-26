@@ -8,16 +8,19 @@ marks so include and mapping errors identify the relevant YAML location.
 
 from __future__ import annotations
 
-import json
-import math
 import os
 import re
+import sys
 from collections.abc import Callable, Hashable, Iterable
 from dataclasses import dataclass
-from importlib import import_module
 from io import StringIO
 from pathlib import Path
-from typing import Literal, NamedTuple, NoReturn, Protocol, TextIO, cast
+from typing import Generic, NamedTuple, NoReturn, TextIO, cast, overload
+
+if sys.version_info >= (3, 13):
+    from typing import TypeVar as _TypeVar
+else:
+    from typing_extensions import TypeVar as _TypeVar
 
 import yaml
 from yaml import MappingNode, Node, SafeLoader, ScalarNode, SequenceNode
@@ -34,6 +37,13 @@ from ._search import IncludeSearch, validate_include_search
 from ._streams import read_bounded
 from ._unset import UNSET, UnsetType
 from ._yaml_loader import configured_include_loader, ordinary_loader, validate_yaml_loader
+from .formats import (
+    FormatDependencyError,
+    FormatInput,
+    FormatParseError,
+    FormatRegistry,
+    UnknownFormatError,
+)
 from .limits import DEFAULT_INCLUDE_LIMITS, IncludeLimits, resolve_include_limits
 from .resolver import (
     FileRoot,
@@ -72,6 +82,7 @@ __all__ = (
 )
 
 _directive_regex = re.compile(r"^%(?P<directive>[^ \t]+)(?:[ \t]+(?P<value>.*))?$")
+_LoaderValue_co = _TypeVar("_LoaderValue_co", covariant=True, bound=object, default=YamlType)
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,82 +123,6 @@ class _NamedStringIO(StringIO):
     def __init__(self, text: str, name: str) -> None:
         super().__init__(text)
         self.name = name
-
-
-class _TomlParser(Protocol):
-    def loads(self, text: str, /) -> object: ...
-
-
-def _included_format(source: IncludeSource) -> Literal["yaml", "json", "toml"]:
-    """Select an included document format from its resolved source suffix."""
-    suffix = source.path.suffix.lower()
-    if suffix == ".json":
-        return "json"
-    if suffix == ".toml":
-        return "toml"
-    return "yaml"
-
-
-def _unique_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
-    """Construct a JSON object while rejecting duplicate keys."""
-    result: dict[str, object] = {}
-    for key, value in pairs:
-        if key in result:
-            raise ValueError(f"duplicate JSON object key {key!r}")
-        result[key] = value
-    return result
-
-
-def _finite_json_float(value: str) -> float:
-    """Reject JSON numbers that Python would decode to infinity."""
-    number = float(value)
-    if not math.isfinite(number):
-        raise ValueError(f"non-finite JSON number {value!r} is not supported")
-    return number
-
-
-def _reject_json_constant(value: str) -> NoReturn:
-    """Reject Python's non-standard NaN and Infinity JSON extensions."""
-    raise ValueError(f"non-finite JSON constant {value!r} is not supported")
-
-
-def _load_json(text: str) -> object:
-    """Parse strict JSON values with unique object keys and finite numbers."""
-    return json.loads(
-        text,
-        object_pairs_hook=_unique_json_object,
-        parse_float=_finite_json_float,
-        parse_constant=_reject_json_constant,
-    )
-
-
-def _toml_parser() -> _TomlParser:
-    """Select stdlib TOML support or the declared Python 3.10 compatibility module."""
-    try:
-        return cast(_TomlParser, import_module("tomllib"))
-    except ModuleNotFoundError as exc:
-        if exc.name != "tomllib":
-            raise
-    try:
-        return cast(_TomlParser, import_module("tomli"))
-    except ModuleNotFoundError as exc:
-        raise ImportError("TOML includes on Python before 3.11 require the tomli dependency") from exc
-
-
-def _parse_included_data(text: str, source_name: str, format_name: Literal["json", "toml"], node: Node) -> YamlType:
-    """Parse a non-YAML include and attach failures to its originating YAML tag."""
-    try:
-        if format_name == "json":
-            return cast(YamlType, _load_json(text))
-        return cast(YamlType, _toml_parser().loads(text))
-    except ImportError as exc:
-        _include_error(node, f"cannot parse TOML include source {source_name}: {exc}", exc)
-    except (RecursionError, ValueError) as exc:
-        _include_error(
-            node,
-            f"invalid {format_name.upper()} include source {source_name}: {exc}",
-            exc,
-        )
 
 
 def _read_text_input(stream: TextIO) -> object:
@@ -380,6 +315,7 @@ class IncludeLoader(SafeLoader):
         include_resolver: IncludeResolver | None = None,
         source: IncludeSource | None = None,
         yaml_loader: type[object] = SafeLoader,
+        format_registry: FormatRegistry | None = None,
         include_search: IncludeSearch = "local-first",
         allow_absolute_includes: bool = True,
     ) -> None:
@@ -392,13 +328,14 @@ class IncludeLoader(SafeLoader):
         self.load_stack = tuple(load_stack)
         self.budget = budget
         self.yaml_loader = yaml_loader
+        self.format_registry = (format_registry if format_registry is not None else FormatRegistry()).snapshot()
         self.include_search: IncludeSearch = validate_include_search(include_search)
         self.allow_absolute_includes = bool(allow_absolute_includes)
         self.include_resolver = include_resolver or FileSystemIncludeResolver()
         self.source = source or (FileSource(current_file) if current_file is not None else None)
 
     @staticmethod
-    def _construct_include(loader: IncludeLoader, node: Node) -> YamlType:
+    def _construct_include(loader: IncludeLoader, node: Node) -> object:
         return loader._include(node)
 
     @staticmethod
@@ -467,7 +404,7 @@ class IncludeLoader(SafeLoader):
                 result.append(value)
         return result
 
-    def _include(self, node: Node) -> YamlType:
+    def _include(self, node: Node) -> object:
         if not isinstance(node, ScalarNode):
             _include_error(node, f"{INCLUDE_TAG} expects a scalar path")
         name = self.construct_scalar(node)
@@ -519,6 +456,12 @@ class IncludeLoader(SafeLoader):
                 node,
                 f"maximum include count ({self.budget.max_include_files}) exceeded",
             )
+        try:
+            selection = self.format_registry.select_format(include_source, format_id=resolved.format_id)
+        except UnknownFormatError as exc:
+            _include_error(node, str(exc), exc)
+        descriptor = selection.descriptor
+        adapter = selection.adapter
         remaining_bytes = (
             None
             if self.budget.max_total_include_bytes is None
@@ -549,6 +492,22 @@ class IncludeLoader(SafeLoader):
                 )
             self.budget.include_files += 1
             self.budget.include_bytes += len(content)
+            if adapter is not None:
+                format_input = FormatInput(include_source, source_label, content)
+                try:
+                    return adapter.parse(format_input)
+                except FormatDependencyError as exc:
+                    _include_error(
+                        node,
+                        f"cannot parse {descriptor.format_id.upper()} include source {source_label}: {exc}",
+                        exc,
+                    )
+                except FormatParseError as exc:
+                    _include_error(
+                        node,
+                        f"invalid {descriptor.format_id.upper()} include source {source_label}: {exc}",
+                        exc,
+                    )
             try:
                 text = content.decode("utf-8")
             except UnicodeDecodeError as exc:
@@ -557,9 +516,6 @@ class IncludeLoader(SafeLoader):
                     f"include source {_include_source_label(include_source)} is not UTF-8 text",
                     exc,
                 )
-            included_format = _included_format(include_source)
-            if included_format != "yaml":
-                return _parse_included_data(text, source_label, included_format, node)
             if self.recursive_dispatch:
                 self.budget.current_depth += 1
                 try:
@@ -575,18 +531,16 @@ class IncludeLoader(SafeLoader):
                         budget=self.budget,
                         include_resolver=self.include_resolver,
                         yaml_loader=self.yaml_loader,
+                        format_registry=self.format_registry,
                         include_search=self.include_search,
                         allow_absolute_includes=self.allow_absolute_includes,
                     )
                 finally:
                     self.budget.current_depth -= 1
             ordinary_text, _ = _strip_loader_directive(text)
-            return cast(
-                YamlType,
-                yaml.load(
-                    _NamedStringIO(ordinary_text, source_label),
-                    Loader=cast(type[SafeLoader], ordinary_loader(self.yaml_loader)),
-                ),
+            return yaml.load(
+                _NamedStringIO(ordinary_text, source_label),
+                Loader=cast(type[SafeLoader], ordinary_loader(self.yaml_loader)),
             )
         except yaml.YAMLError:
             raise
@@ -732,9 +686,10 @@ def _load_composed_text(
     budget: _IncludeBudget,
     include_resolver: IncludeResolver,
     yaml_loader: type[object],
+    format_registry: FormatRegistry,
     include_search: IncludeSearch,
     allow_absolute_includes: bool,
-) -> YamlType:
+) -> object:
     """Parse text with include behavior using already normalized filesystem state."""
     loader = configured_include_loader(yaml_loader, IncludeLoader)(
         _NamedStringIO(text, source_name),
@@ -747,6 +702,7 @@ def _load_composed_text(
         budget=budget,
         include_resolver=include_resolver,
         yaml_loader=yaml_loader,
+        format_registry=format_registry,
         include_search=include_search,
         allow_absolute_includes=allow_absolute_includes,
     )
@@ -756,6 +712,55 @@ def _load_composed_text(
         loader.dispose()  # pyright: ignore[reportUnknownMemberType]
     _assert_no_overlay_markers(result)
     return result
+
+
+@overload
+def load_yaml_dispatch(
+    stream: TextIO,
+    search_paths: Iterable[str | os.PathLike[str] | IncludeRoot] | None = None,
+    loader_tag: str | UnsetType | None = UNSET,
+    recursive_dispatch: bool = True,
+    load_stack: Iterable[str | os.PathLike[str] | IncludeSource] | None = None,
+    *,
+    source_path: str | os.PathLike[str] | None = None,
+    source: IncludeSource | None = None,
+    allowed_roots: Iterable[str | os.PathLike[str] | IncludeRoot] | None = None,
+    include_resolver: IncludeResolver | None = None,
+    format_registry: None = None,
+    include_search: IncludeSearch = "local-first",
+    allow_absolute_includes: bool = True,
+    include_limits: IncludeLimits | UnsetType = UNSET,
+    max_include_depth: int | UnsetType | None = UNSET,
+    max_include_files: int | UnsetType | None = UNSET,
+    max_file_bytes: int | UnsetType | None = UNSET,
+    max_total_include_bytes: int | UnsetType | None = UNSET,
+    _budget: _IncludeBudget | None = None,
+) -> YamlType: ...
+
+
+@overload
+def load_yaml_dispatch(
+    stream: TextIO,
+    search_paths: Iterable[str | os.PathLike[str] | IncludeRoot] | None = None,
+    loader_tag: str | UnsetType | None = UNSET,
+    recursive_dispatch: bool = True,
+    load_stack: Iterable[str | os.PathLike[str] | IncludeSource] | None = None,
+    *,
+    source_path: str | os.PathLike[str] | None = None,
+    source: IncludeSource | None = None,
+    allowed_roots: Iterable[str | os.PathLike[str] | IncludeRoot] | None = None,
+    include_resolver: IncludeResolver | None = None,
+    yaml_loader: type[object] = SafeLoader,
+    format_registry: FormatRegistry | None = None,
+    include_search: IncludeSearch = "local-first",
+    allow_absolute_includes: bool = True,
+    include_limits: IncludeLimits | UnsetType = UNSET,
+    max_include_depth: int | UnsetType | None = UNSET,
+    max_include_files: int | UnsetType | None = UNSET,
+    max_file_bytes: int | UnsetType | None = UNSET,
+    max_total_include_bytes: int | UnsetType | None = UNSET,
+    _budget: _IncludeBudget | None = None,
+) -> object: ...
 
 
 def load_yaml_dispatch(
@@ -770,6 +775,7 @@ def load_yaml_dispatch(
     allowed_roots: Iterable[str | os.PathLike[str] | IncludeRoot] | None = None,
     include_resolver: IncludeResolver | None = None,
     yaml_loader: type[object] = SafeLoader,
+    format_registry: FormatRegistry | None = None,
     include_search: IncludeSearch = "local-first",
     allow_absolute_includes: bool = True,
     include_limits: IncludeLimits | UnsetType = UNSET,
@@ -778,7 +784,7 @@ def load_yaml_dispatch(
     max_file_bytes: int | UnsetType | None = UNSET,
     max_total_include_bytes: int | UnsetType | None = UNSET,
     _budget: _IncludeBudget | None = None,
-) -> YamlType:
+) -> object:
     """Load YAML with a selected PyYAML loader or dispatch to bounded includes.
 
     ``stream`` must return text. An omitted ``loader_tag`` follows the header;
@@ -862,12 +868,9 @@ def load_yaml_dispatch(
     if effective_tag != COMPOSE_LOADER_TAG:
         if effective_tag is not None:
             raise YamlIncludeError(f"unsupported loader_tag {effective_tag!r}; expected {COMPOSE_LOADER_TAG!r} or None")
-        return cast(
-            YamlType,
-            yaml.load(
-                _NamedStringIO(cleaned, source_name),
-                Loader=cast(type[SafeLoader], ordinary_loader(yaml_loader)),
-            ),
+        return yaml.load(
+            _NamedStringIO(cleaned, source_name),
+            Loader=cast(type[SafeLoader], ordinary_loader(yaml_loader)),
         )
 
     search_path_inputs: tuple[Path | IncludeRoot, ...] = tuple(
@@ -909,6 +912,7 @@ def load_yaml_dispatch(
     else:
         budget = _budget
     resolver = include_resolver or FileSystemIncludeResolver()
+    formats = (format_registry if format_registry is not None else FormatRegistry()).snapshot()
     result = _load_composed_text(
         cleaned,
         source_name,
@@ -920,10 +924,56 @@ def load_yaml_dispatch(
         budget=budget,
         include_resolver=resolver,
         yaml_loader=yaml_loader,
+        format_registry=formats,
         include_search=include_search,
         allow_absolute_includes=allow_absolute_includes,
     )
     return result
+
+
+@overload
+def load_yaml_compose(
+    stream: TextIO,
+    search_paths: Iterable[str | os.PathLike[str] | IncludeRoot] | None = None,
+    recursive_dispatch: bool = True,
+    load_stack: Iterable[str | os.PathLike[str] | IncludeSource] | None = None,
+    *,
+    source_path: str | os.PathLike[str] | None = None,
+    source: IncludeSource | None = None,
+    allowed_roots: Iterable[str | os.PathLike[str] | IncludeRoot] | None = None,
+    include_resolver: IncludeResolver | None = None,
+    format_registry: None = None,
+    include_search: IncludeSearch = "local-first",
+    allow_absolute_includes: bool = True,
+    include_limits: IncludeLimits | UnsetType = UNSET,
+    max_include_depth: int | UnsetType | None = UNSET,
+    max_include_files: int | UnsetType | None = UNSET,
+    max_file_bytes: int | UnsetType | None = UNSET,
+    max_total_include_bytes: int | UnsetType | None = UNSET,
+) -> YamlType: ...
+
+
+@overload
+def load_yaml_compose(
+    stream: TextIO,
+    search_paths: Iterable[str | os.PathLike[str] | IncludeRoot] | None = None,
+    recursive_dispatch: bool = True,
+    load_stack: Iterable[str | os.PathLike[str] | IncludeSource] | None = None,
+    *,
+    source_path: str | os.PathLike[str] | None = None,
+    source: IncludeSource | None = None,
+    allowed_roots: Iterable[str | os.PathLike[str] | IncludeRoot] | None = None,
+    include_resolver: IncludeResolver | None = None,
+    yaml_loader: type[object] = SafeLoader,
+    format_registry: FormatRegistry | None = None,
+    include_search: IncludeSearch = "local-first",
+    allow_absolute_includes: bool = True,
+    include_limits: IncludeLimits | UnsetType = UNSET,
+    max_include_depth: int | UnsetType | None = UNSET,
+    max_include_files: int | UnsetType | None = UNSET,
+    max_file_bytes: int | UnsetType | None = UNSET,
+    max_total_include_bytes: int | UnsetType | None = UNSET,
+) -> object: ...
 
 
 def load_yaml_compose(
@@ -937,6 +987,7 @@ def load_yaml_compose(
     allowed_roots: Iterable[str | os.PathLike[str] | IncludeRoot] | None = None,
     include_resolver: IncludeResolver | None = None,
     yaml_loader: type[object] = SafeLoader,
+    format_registry: FormatRegistry | None = None,
     include_search: IncludeSearch = "local-first",
     allow_absolute_includes: bool = True,
     include_limits: IncludeLimits | UnsetType = UNSET,
@@ -944,7 +995,7 @@ def load_yaml_compose(
     max_include_files: int | UnsetType | None = UNSET,
     max_file_bytes: int | UnsetType | None = UNSET,
     max_total_include_bytes: int | UnsetType | None = UNSET,
-) -> YamlType:
+) -> object:
     """Load a text stream using include and overlay syntax without a header.
 
     The stream, roots, resolver, and limits have the same meaning as in
@@ -963,6 +1014,7 @@ def load_yaml_compose(
         allowed_roots=allowed_roots,
         include_resolver=include_resolver,
         yaml_loader=yaml_loader,
+        format_registry=format_registry,
         include_search=include_search,
         allow_absolute_includes=allow_absolute_includes,
         include_limits=include_limits,
@@ -973,6 +1025,7 @@ def load_yaml_compose(
     )
 
 
+@overload
 def load_yaml_file(
     path: str | os.PathLike[str],
     search_paths: Iterable[str | os.PathLike[str] | IncludeRoot] | None = None,
@@ -980,7 +1033,7 @@ def load_yaml_file(
     loader_tag: str | UnsetType | None = UNSET,
     allowed_roots: Iterable[str | os.PathLike[str] | IncludeRoot] | None = None,
     include_resolver: IncludeResolver | None = None,
-    yaml_loader: type[object] = SafeLoader,
+    format_registry: None = None,
     include_search: IncludeSearch = "local-first",
     allow_absolute_includes: bool = True,
     recursive_dispatch: bool = True,
@@ -989,7 +1042,48 @@ def load_yaml_file(
     max_include_files: int | UnsetType | None = UNSET,
     max_file_bytes: int | UnsetType | None = UNSET,
     max_total_include_bytes: int | UnsetType | None = UNSET,
-) -> YamlType:
+) -> YamlType: ...
+
+
+@overload
+def load_yaml_file(
+    path: str | os.PathLike[str],
+    search_paths: Iterable[str | os.PathLike[str] | IncludeRoot] | None = None,
+    *,
+    loader_tag: str | UnsetType | None = UNSET,
+    allowed_roots: Iterable[str | os.PathLike[str] | IncludeRoot] | None = None,
+    include_resolver: IncludeResolver | None = None,
+    yaml_loader: type[object] = SafeLoader,
+    format_registry: FormatRegistry | None = None,
+    include_search: IncludeSearch = "local-first",
+    allow_absolute_includes: bool = True,
+    recursive_dispatch: bool = True,
+    include_limits: IncludeLimits | UnsetType = UNSET,
+    max_include_depth: int | UnsetType | None = UNSET,
+    max_include_files: int | UnsetType | None = UNSET,
+    max_file_bytes: int | UnsetType | None = UNSET,
+    max_total_include_bytes: int | UnsetType | None = UNSET,
+) -> object: ...
+
+
+def load_yaml_file(
+    path: str | os.PathLike[str],
+    search_paths: Iterable[str | os.PathLike[str] | IncludeRoot] | None = None,
+    *,
+    loader_tag: str | UnsetType | None = UNSET,
+    allowed_roots: Iterable[str | os.PathLike[str] | IncludeRoot] | None = None,
+    include_resolver: IncludeResolver | None = None,
+    yaml_loader: type[object] = SafeLoader,
+    format_registry: FormatRegistry | None = None,
+    include_search: IncludeSearch = "local-first",
+    allow_absolute_includes: bool = True,
+    recursive_dispatch: bool = True,
+    include_limits: IncludeLimits | UnsetType = UNSET,
+    max_include_depth: int | UnsetType | None = UNSET,
+    max_include_files: int | UnsetType | None = UNSET,
+    max_file_bytes: int | UnsetType | None = UNSET,
+    max_total_include_bytes: int | UnsetType | None = UNSET,
+) -> object:
     """Read one UTF-8 YAML file and dispatch according to its header.
 
     Composition documents support shallow ``<<`` and recursive ``<<<``
@@ -1019,6 +1113,7 @@ def load_yaml_file(
             allowed_roots=allowed_roots,
             include_resolver=include_resolver,
             yaml_loader=yaml_loader,
+            format_registry=format_registry,
             include_search=include_search,
             allow_absolute_includes=allow_absolute_includes,
             include_limits=include_limits,
@@ -1029,7 +1124,7 @@ def load_yaml_file(
         )
 
 
-class YamlConfigLoader:
+class YamlConfigLoader(Generic[_LoaderValue_co]):
     """Reusable loader policy with a fresh include budget for every call.
 
     Construction captures the active process-wide include limits. Later calls
@@ -1038,11 +1133,88 @@ class YamlConfigLoader:
     per-instance ``max_*`` overrides.
     """
 
+    @overload
+    def __new__(
+        cls,
+        *,
+        include_resolver: IncludeResolver | None = None,
+        format_registry: None = None,
+        include_search: IncludeSearch = "local-first",
+        allow_absolute_includes: bool = True,
+        search_paths: Iterable[str | os.PathLike[str] | IncludeRoot] | None = None,
+        allowed_roots: Iterable[str | os.PathLike[str] | IncludeRoot] | None = None,
+        recursive_dispatch: bool = True,
+        include_limits: IncludeLimits | UnsetType = UNSET,
+        max_include_depth: int | UnsetType | None = UNSET,
+        max_include_files: int | UnsetType | None = UNSET,
+        max_file_bytes: int | UnsetType | None = UNSET,
+        max_total_include_bytes: int | UnsetType | None = UNSET,
+    ) -> YamlConfigLoader[YamlType]: ...
+
+    @overload
+    def __new__(
+        cls,
+        *,
+        include_resolver: IncludeResolver | None = None,
+        yaml_loader: type[object],
+        format_registry: FormatRegistry | None = None,
+        include_search: IncludeSearch = "local-first",
+        allow_absolute_includes: bool = True,
+        search_paths: Iterable[str | os.PathLike[str] | IncludeRoot] | None = None,
+        allowed_roots: Iterable[str | os.PathLike[str] | IncludeRoot] | None = None,
+        recursive_dispatch: bool = True,
+        include_limits: IncludeLimits | UnsetType = UNSET,
+        max_include_depth: int | UnsetType | None = UNSET,
+        max_include_files: int | UnsetType | None = UNSET,
+        max_file_bytes: int | UnsetType | None = UNSET,
+        max_total_include_bytes: int | UnsetType | None = UNSET,
+    ) -> YamlConfigLoader[object]: ...
+
+    @overload
+    def __new__(
+        cls,
+        *,
+        include_resolver: IncludeResolver | None = None,
+        yaml_loader: type[object] = SafeLoader,
+        format_registry: FormatRegistry,
+        include_search: IncludeSearch = "local-first",
+        allow_absolute_includes: bool = True,
+        search_paths: Iterable[str | os.PathLike[str] | IncludeRoot] | None = None,
+        allowed_roots: Iterable[str | os.PathLike[str] | IncludeRoot] | None = None,
+        recursive_dispatch: bool = True,
+        include_limits: IncludeLimits | UnsetType = UNSET,
+        max_include_depth: int | UnsetType | None = UNSET,
+        max_include_files: int | UnsetType | None = UNSET,
+        max_file_bytes: int | UnsetType | None = UNSET,
+        max_total_include_bytes: int | UnsetType | None = UNSET,
+    ) -> YamlConfigLoader[object]: ...
+
+    def __new__(
+        cls,
+        *,
+        include_resolver: IncludeResolver | None = None,
+        yaml_loader: type[object] = SafeLoader,
+        format_registry: FormatRegistry | None = None,
+        include_search: IncludeSearch = "local-first",
+        allow_absolute_includes: bool = True,
+        search_paths: Iterable[str | os.PathLike[str] | IncludeRoot] | None = None,
+        allowed_roots: Iterable[str | os.PathLike[str] | IncludeRoot] | None = None,
+        recursive_dispatch: bool = True,
+        include_limits: IncludeLimits | UnsetType = UNSET,
+        max_include_depth: int | UnsetType | None = UNSET,
+        max_include_files: int | UnsetType | None = UNSET,
+        max_file_bytes: int | UnsetType | None = UNSET,
+        max_total_include_bytes: int | UnsetType | None = UNSET,
+    ) -> YamlConfigLoader[object]:
+        """Allocate the loader instance; overloads refine its result type."""
+        return super().__new__(cls)
+
     def __init__(
         self,
         *,
         include_resolver: IncludeResolver | None = None,
         yaml_loader: type[object] = SafeLoader,
+        format_registry: FormatRegistry | None = None,
         include_search: IncludeSearch = "local-first",
         allow_absolute_includes: bool = True,
         search_paths: Iterable[str | os.PathLike[str] | IncludeRoot] | None = None,
@@ -1054,7 +1226,7 @@ class YamlConfigLoader:
         max_file_bytes: int | UnsetType | None = UNSET,
         max_total_include_bytes: int | UnsetType | None = UNSET,
     ) -> None:
-        """Capture the resolver, lookup roots, and effective include limits.
+        """Capture the resolver, format registry, lookup roots, and include limits.
 
         ``search_paths`` supply additional lookup locations. Explicit
         ``allowed_roots`` replace the default root set derived from the source
@@ -1072,10 +1244,15 @@ class YamlConfigLoader:
         a source and never fall back to search paths. Allowed roots still apply
         to every resolved file. An unsupported policy raises ``ValueError``.
         ``allow_absolute_includes=False`` rejects absolute include names.
+        ``format_registry`` is copied into a read-only snapshot. Its adapters
+        are shared by reference and must be stateless and safe for concurrent
+        calls. The default registry contains the built-in YAML, JSON, and TOML
+        formats.
         """
         validate_yaml_loader(yaml_loader)
         self.include_resolver = include_resolver
         self.yaml_loader = yaml_loader
+        self.format_registry = (format_registry if format_registry is not None else FormatRegistry()).snapshot()
         self.include_search: IncludeSearch = validate_include_search(include_search)
         self.allow_absolute_includes = bool(allow_absolute_includes)
         self.search_paths = tuple(search_paths or ())
@@ -1114,7 +1291,23 @@ class YamlConfigLoader:
         """Return this loader's effective total byte limit."""
         return self._include_limits.max_total_include_bytes
 
-    def load_file(self, path: str | os.PathLike[str], *, loader_tag: str | UnsetType | None = UNSET) -> YamlType:
+    @overload
+    def load_file(
+        self: YamlConfigLoader[YamlType],
+        path: str | os.PathLike[str],
+        *,
+        loader_tag: str | UnsetType | None = UNSET,
+    ) -> YamlType: ...
+
+    @overload
+    def load_file(
+        self: YamlConfigLoader[object],
+        path: str | os.PathLike[str],
+        *,
+        loader_tag: str | UnsetType | None = UNSET,
+    ) -> object: ...
+
+    def load_file(self, path: str | os.PathLike[str], *, loader_tag: str | UnsetType | None = UNSET) -> object:
         """Load a UTF-8 file, following its header unless ``loader_tag`` overrides it."""
         return load_yaml_file(
             path,
@@ -1123,11 +1316,32 @@ class YamlConfigLoader:
             allowed_roots=self.allowed_roots,
             include_resolver=self.include_resolver,
             yaml_loader=self.yaml_loader,
+            format_registry=self.format_registry,
             include_search=self.include_search,
             allow_absolute_includes=self.allow_absolute_includes,
             recursive_dispatch=self.recursive_dispatch,
             include_limits=self.include_limits,
         )
+
+    @overload
+    def load_stream(
+        self: YamlConfigLoader[YamlType],
+        stream: TextIO,
+        *,
+        source_path: str | os.PathLike[str] | None = None,
+        source: IncludeSource | None = None,
+        loader_tag: str | UnsetType | None = UNSET,
+    ) -> YamlType: ...
+
+    @overload
+    def load_stream(
+        self: YamlConfigLoader[object],
+        stream: TextIO,
+        *,
+        source_path: str | os.PathLike[str] | None = None,
+        source: IncludeSource | None = None,
+        loader_tag: str | UnsetType | None = UNSET,
+    ) -> object: ...
 
     def load_stream(
         self,
@@ -1136,7 +1350,7 @@ class YamlConfigLoader:
         source_path: str | os.PathLike[str] | None = None,
         source: IncludeSource | None = None,
         loader_tag: str | UnsetType | None = UNSET,
-    ) -> YamlType:
+    ) -> object:
         """Load a text stream with this instance's policy and header dispatch.
 
         Pass ``source_path`` for a filesystem stream or ``source`` for a
@@ -1152,10 +1366,29 @@ class YamlConfigLoader:
             allowed_roots=self.allowed_roots,
             include_resolver=self.include_resolver,
             yaml_loader=self.yaml_loader,
+            format_registry=self.format_registry,
             include_search=self.include_search,
             allow_absolute_includes=self.allow_absolute_includes,
             include_limits=self.include_limits,
         )
+
+    @overload
+    def load_include(
+        self: YamlConfigLoader[YamlType],
+        stream: TextIO,
+        *,
+        source_path: str | os.PathLike[str] | None = None,
+        source: IncludeSource | None = None,
+    ) -> YamlType: ...
+
+    @overload
+    def load_include(
+        self: YamlConfigLoader[object],
+        stream: TextIO,
+        *,
+        source_path: str | os.PathLike[str] | None = None,
+        source: IncludeSource | None = None,
+    ) -> object: ...
 
     def load_include(
         self,
@@ -1163,7 +1396,7 @@ class YamlConfigLoader:
         *,
         source_path: str | os.PathLike[str] | None = None,
         source: IncludeSource | None = None,
-    ) -> YamlType:
+    ) -> object:
         """Load a text stream with include syntax enabled, even without a header.
 
         Pass ``source_path`` or ``source`` when relative includes need a base.
@@ -1177,6 +1410,7 @@ class YamlConfigLoader:
             allowed_roots=self.allowed_roots,
             include_resolver=self.include_resolver,
             yaml_loader=self.yaml_loader,
+            format_registry=self.format_registry,
             include_search=self.include_search,
             allow_absolute_includes=self.allow_absolute_includes,
             include_limits=self.include_limits,

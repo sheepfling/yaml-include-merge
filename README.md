@@ -327,9 +327,7 @@ For those cases, you can supply additional search paths:
 from pathlib import Path
 from yaml_compose import YamlConfigLoader
 
-loader = YamlConfigLoader(
-    search_paths=[Path("config/shared")]
-)
+loader = YamlConfigLoader(search_paths=[Path("config/shared")])
 
 development = loader.load_file("config/development.yaml")
 production = loader.load_file("config/production.yaml")
@@ -414,6 +412,18 @@ PyYAML loader through `yaml_loader` when your application defines additional tru
 tags.
 
 By default, parsing uses PyYAML's `SafeLoader`.
+
+Included `.json` and `.toml` files are parsed by the built-in strict JSON and TOML adapters.
+YAML still owns composition: merge, delete, replace, and spread operators are expressed in
+the including YAML document. You can register a parser for another included-file suffix on a
+`FormatRegistry` and pass that registry to `YamlConfigLoader` or any loading function. See
+the [format adapter guide](docs/formats.md) for a short example and the adapter contract.
+
+Default calls use the public `YamlType` result alias, which includes the native scalar values
+from the built-in YAML, JSON, and TOML parsers, including TOML dates and times. Supplying a
+custom `FormatRegistry` or `yaml_loader` broadens the result to `object`, since those trusted
+extensions can return arbitrary Python values. Narrow or validate that result against your
+application's schema before accessing fields.
 
 ## A small extension, not a new YAML language
 
