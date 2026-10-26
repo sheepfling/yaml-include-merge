@@ -398,6 +398,8 @@ class IncludeLoader(SafeLoader):
             validate_include_name(name, allow_absolute=self.allow_absolute_includes)
         except ValueError as exc:
             _include_error(node, str(exc), exc)
+        if not self.allowed_roots:
+            _include_error(node, f"{INCLUDE_TAG} requires at least one allowed root")
         try:
             resolved = self.include_resolver.resolve(
                 IncludeRequest(
@@ -713,7 +715,10 @@ def load_yaml_dispatch(
     ``FileSource`` or ``MemorySource``. Pass at most one. The source directory
     and ``search_paths`` form the default allowed roots; explicit
     ``allowed_roots`` replace that default. A stream with includes needs at
-    least one allowed root. ``load_stack`` seeds cycle and depth tracking.
+    least one allowed root. The root requirement is checked at each ``!include``
+    before calling its resolver; a missing root raises a marked YAML error.
+    Streams using only anchors, mapping overlays, and list spreads need no roots
+    or search paths. ``load_stack`` seeds cycle and depth tracking.
     Set ``recursive_dispatch=False`` to parse included files as ordinary YAML
     with ``yaml_loader`` and without resolving their own include tags.
 
@@ -798,9 +803,6 @@ def load_yaml_dispatch(
             item if isinstance(item, (FileRoot, MemoryRoot)) else Path(item) for item in allowed_roots
         )
         roots = _normalize_roots(allowed_root_inputs)
-    if not roots:
-        raise ValueError("include loading requires at least one allowed root")
-
     stack: list[IncludeSource] = []
     load_stack_inputs: tuple[Path | IncludeSource, ...] = tuple(
         item if isinstance(item, (FileSource, MemorySource)) else Path(item) for item in (load_stack or ())
@@ -864,7 +866,8 @@ def load_yaml_compose(
 
     The stream, roots, resolver, and limits have the same meaning as in
     ``load_yaml_dispatch``. This function selects ``COMPOSE_LOADER_TAG`` even if the
-    document has no ``%LOADER`` directive.
+    document has no ``%LOADER`` directive. Roots and search paths are unnecessary
+    for local mapping overlays and list spreads; ``!include`` requires an allowed root.
     """
     return load_yaml_dispatch(
         stream,
