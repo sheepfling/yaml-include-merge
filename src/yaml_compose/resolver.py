@@ -18,7 +18,6 @@ from urllib.parse import urlsplit
 from ._paths import resolve_include_file
 from ._search import IncludeSearch, is_explicit_relative, search_locations, validate_include_search
 
-
 @dataclass(frozen=True, slots=True)
 class FileRoot:
     """A filesystem directory that may contain included files.
@@ -28,7 +27,6 @@ class FileRoot:
     """
 
     path: Path
-
 
 @dataclass(frozen=True, slots=True)
 class MemoryRoot:
@@ -45,10 +43,8 @@ class MemoryRoot:
         if not self.namespace or urlsplit(self.namespace).scheme:
             raise ValueError("memory include namespaces must be non-empty local identifiers")
 
-
 #: One configured root, either a filesystem directory or a virtual namespace.
 IncludeRoot = FileRoot | MemoryRoot
-
 
 @dataclass(frozen=True, slots=True)
 class FileSource:
@@ -58,7 +54,6 @@ class FileSource:
     """
 
     path: Path
-
 
 @dataclass(frozen=True, slots=True)
 class MemorySource:
@@ -76,10 +71,8 @@ class MemorySource:
         if self.path.is_absolute() or not self.path.parts or ".." in self.path.parts:
             raise ValueError("memory source paths must stay within their namespace root")
 
-
 #: The identity of a filesystem or in-memory YAML document.
 IncludeSource = FileSource | MemorySource
-
 
 @dataclass(frozen=True, slots=True)
 class IncludeRequest:
@@ -104,7 +97,6 @@ class IncludeRequest:
         """Reject unsupported lookup policies at the request boundary."""
         validate_include_search(self.include_search)
 
-
 @dataclass(frozen=True, slots=True)
 class ResolvedInclude:
     """A source identity and a deferred opener.
@@ -117,7 +109,6 @@ class ResolvedInclude:
 
     source: IncludeSource
     open_binary: Callable[[], BinaryIO]
-
 
 class IncludeResolver(Protocol):
     """Resolve include names to local or in-memory byte streams.
@@ -134,7 +125,6 @@ class IncludeResolver(Protocol):
         The loader converts those failures into marked YAML include errors.
         """
         ...
-
 
 def validate_include_name(name: str, *, allow_absolute: bool = False) -> None:
     """Validate a local include path before looking it up.
@@ -155,8 +145,7 @@ def validate_include_name(name: str, *, allow_absolute: bool = False) -> None:
     if requested.is_absolute() and not allow_absolute:
         raise ValueError("include paths must be relative paths")
 
-
-class FileSystemIncludeResolver:
+class FileSystemIncludeResolver(IncludeResolver):
     """Resolve local files within the request's allowed filesystem roots.
 
     The candidate is canonicalized before the root check, so symlinks cannot
@@ -191,8 +180,7 @@ class FileSystemIncludeResolver:
         )
         return ResolvedInclude(FileSource(path), lambda: path.open("rb"))
 
-
-class MemoryIncludeResolver:
+class MemoryIncludeResolver(IncludeResolver):
     """Resolve files from a mapping for tests and explicitly in-memory configs.
 
     Keys are POSIX-style paths relative to ``root``. String values are encoded

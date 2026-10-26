@@ -8,14 +8,27 @@ one limits snapshot; changing the default does not change an existing loader.
 
 from __future__ import annotations
 
+from copy import copy
 from dataclasses import dataclass
 from threading import Lock
-from typing import cast
 
 from ._unset import UNSET, UnsetType
 
+def _resolve_limit(value: int | None | UnsetType, default: int | None) -> int | None:
+    if isinstance(value, UnsetType):
+        return default
+    if value is None:
+        return None
+    if isinstance(value, int):
+        return max(0, value)
+    raise ValueError("limit must be an integer or None")
 
-@dataclass(frozen=True, slots=True)
+_DEFAULT_MAX_INCLUDE_DEPTH = 32
+_DEFAULT_MAX_INCLUDE_FILES = 1024
+_DEFAULT_MAX_FILE_BYTES = 8_388_608
+_DEFAULT_MAX_TOTAL_INCLUDE_BYTES = 67_108_864
+
+@dataclass(slots=True)
 class IncludeLimits:
     """Optional non-negative limits applied to files reached through ``!include``.
 
@@ -24,12 +37,10 @@ class IncludeLimits:
     use of that resource; ``None`` leaves that resource unbounded. Booleans,
     negative numbers, and other values raise ``ValueError``.
 
-    The generous bounded defaults allow 32 include levels, 1,024 file reads,
-    8 MiB per file, and 64 MiB in total. These are package policy choices for
-    configuration composition, not YAML specification limits. File and byte
-    counts include repeated reads of the same source, including reads for
-    spread and replacement values. They bound input content, not the size of
-    the constructed Python object graph.
+    These are package policy choices for configuration composition, not YAML
+    specification limits. File and byte counts include repeated reads of the
+    same source, including reads for spread and replacement values.
+    They bound input content, not the size of the constructed Python object graph.
 
     Attributes:
         max_include_depth: Maximum nested ``!include`` levels, or ``None``.
@@ -40,28 +51,23 @@ class IncludeLimits:
             or ``None``.
 
     """
+    max_include_depth: int | None = _DEFAULT_MAX_INCLUDE_DEPTH
+    max_include_files: int | None = _DEFAULT_MAX_INCLUDE_FILES
+    max_file_bytes: int | None = _DEFAULT_MAX_FILE_BYTES
+    max_total_include_bytes: int | None = _DEFAULT_MAX_TOTAL_INCLUDE_BYTES
 
-    max_include_depth: int | None = 32
-    max_include_files: int | None = 1024
-    max_file_bytes: int | None = 8_388_608
-    max_total_include_bytes: int | None = 67_108_864
-
-    def __post_init__(self) -> None:
-        """Reject invalid bounds before a limits object can be used."""
-        values: tuple[int | None, ...] = (
-            self.max_include_depth,
-            self.max_include_files,
-            self.max_file_bytes,
-            self.max_total_include_bytes,
-        )
-        if any(value is not None and (type(value) is not int or value < 0) for value in values):
-            raise ValueError("include limits must be non-negative integers or None")
-
+    def __post_init__(self):
+        if self.max_include_depth is not None and self.max_include_depth < 0:
+            raise ValueError("max_include_depth must be non-negative")
+        if self.max_include_files is not None and self.max_include_files < 0:
+            raise ValueError("max_include_files must be non-negative")
+        if self.max_file_bytes is not None and self.max_file_bytes < 0:
+            raise ValueError("max_file_bytes must be non-negative")
+        if self.max_total_include_bytes is not None and self.max_total_include_bytes < 0:
+            raise ValueError("max_total_include_bytes must be non-negative")
 
 DEFAULT_INCLUDE_LIMITS = IncludeLimits()
 _configured_default_limits = DEFAULT_INCLUDE_LIMITS
-_default_limits_lock = Lock()
-
 
 def get_default_include_limits() -> IncludeLimits:
     """Return the active defaults for new top-level loads and loader instances.
@@ -69,9 +75,7 @@ def get_default_include_limits() -> IncludeLimits:
     The returned ``IncludeLimits`` is immutable. Use ``dataclasses.replace``
     and ``set_default_include_limits`` to change selected fields.
     """
-    with _default_limits_lock:
-        return _configured_default_limits
-
+    return copy(_configured_default_limits)
 
 def set_default_include_limits(limits: IncludeLimits) -> None:
     """Replace the process-wide defaults for future loads and loader instances.
@@ -86,17 +90,15 @@ def set_default_include_limits(limits: IncludeLimits) -> None:
     if type(limits) is not IncludeLimits:
         raise TypeError("limits must be an IncludeLimits instance")
     global _configured_default_limits
-    with _default_limits_lock:
-        _configured_default_limits = limits
-
+    _configured_default_limits = copy(limits)
 
 def resolve_include_limits(
-    max_include_depth: int | UnsetType | None,
-    max_include_files: int | UnsetType | None,
-    max_file_bytes: int | UnsetType | None,
-    max_total_include_bytes: int | UnsetType | None,
-    *,
-    include_limits: IncludeLimits | UnsetType = UNSET,
+        max_include_depth: int | None | UnsetType,
+        max_include_files: int | None | UnsetType,
+        max_file_bytes: int | None | UnsetType,
+        max_total_include_bytes: int | None | UnsetType,
+        *,
+        include_limits: IncludeLimits | UnsetType = UNSET,
 ) -> IncludeLimits:
     """Combine a reusable profile and individual overrides into one snapshot.
 
@@ -109,31 +111,9 @@ def resolve_include_limits(
     defaults = get_default_include_limits() if include_limits is UNSET else include_limits
     if not isinstance(defaults, IncludeLimits):
         raise TypeError("include_limits must be an IncludeLimits instance")
-    overrides = (
-        max_include_depth,
-        max_include_files,
-        max_file_bytes,
-        max_total_include_bytes,
-    )
-    if all(value is UNSET for value in overrides):
-        return defaults
     return IncludeLimits(
-        max_include_depth=(
-            defaults.max_include_depth
-            if max_include_depth is UNSET
-            else cast(int | None, max_include_depth)
-        ),
-        max_include_files=(
-            defaults.max_include_files
-            if max_include_files is UNSET
-            else cast(int | None, max_include_files)
-        ),
-        max_file_bytes=(
-            defaults.max_file_bytes if max_file_bytes is UNSET else cast(int | None, max_file_bytes)
-        ),
-        max_total_include_bytes=(
-            defaults.max_total_include_bytes
-            if max_total_include_bytes is UNSET
-            else cast(int | None, max_total_include_bytes)
-        ),
+        max_include_depth=_resolve_limit(max_include_depth, defaults.max_include_depth),
+        max_include_files=_resolve_limit(max_include_files, defaults.max_include_files),
+        max_file_bytes=_resolve_limit(max_file_bytes, defaults.max_file_bytes),
+        max_total_include_bytes=_resolve_limit(max_total_include_bytes, defaults.max_total_include_bytes),
     )

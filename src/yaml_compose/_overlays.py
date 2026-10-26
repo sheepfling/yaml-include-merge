@@ -57,7 +57,7 @@ def assert_no_markers(value: object, seen: MutableSet[int] | None = None) -> Non
     if seen is None:
         seen = set()
     if isinstance(value, dict):
-        mapping = cast(YamlDict, value)
+        mapping = value
         if id(mapping) in seen:
             return
         seen.add(id(mapping))
@@ -65,7 +65,7 @@ def assert_no_markers(value: object, seen: MutableSet[int] | None = None) -> Non
             assert_no_markers(key, seen)
             assert_no_markers(item, seen)
     elif isinstance(value, (list, tuple)):
-        sequence = cast(list[object] | tuple[object, ...], value)
+        sequence = value
         if id(sequence) in seen:
             return
         seen.add(id(sequence))

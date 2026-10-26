@@ -9,7 +9,7 @@ from typing_extensions import assert_type
 from yaml_compose import UNSET, UnsetType
 
 
-def check_unset_annotation(value: int | UnsetType | None) -> int | None:
+def check_unset_annotation(value: int | None | UnsetType) -> int | None:
     """Ensure the public sentinel class composes with ordinary optional types."""
     if value is UNSET:
         return 0
