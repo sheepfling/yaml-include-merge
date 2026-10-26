@@ -81,9 +81,7 @@ def test_simple_runner_loads_all_the_documented_examples(
     assert load_examples() == expected_simple_examples
 
 
-def test_readme_and_examples_index_link_to_their_tests(
-    repo_root: Path, examples_path: Path
-) -> None:
+def test_readme_and_examples_index_link_to_their_tests(repo_root: Path, examples_path: Path) -> None:
     readme = (repo_root / "README.md").read_text(encoding="utf-8")
     examples = (examples_path / "README.md").read_text(encoding="utf-8")
     assert "[examples index](examples/README.md)" in readme

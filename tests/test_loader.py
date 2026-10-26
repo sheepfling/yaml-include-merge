@@ -19,6 +19,7 @@ from yaml_compose import (
     set_default_include_limits,
 )
 
+
 class TestLoader:
     root: Path
 
@@ -71,9 +72,7 @@ class TestLoader:
         with pytest.raises(yaml.YAMLError):
             load_yaml_file(ordinary)
         assert load_yaml_file(ordinary, yaml_loader=UpperLoader) == {"name": "ALICE"}
-        assert load_yaml_dispatch(StringIO("name: !upper alice\n"), yaml_loader=UpperLoader) == {
-            "name": "ALICE"
-        }
+        assert load_yaml_dispatch(StringIO("name: !upper alice\n"), yaml_loader=UpperLoader) == {"name": "ALICE"}
         assert load_yaml_compose(
             StringIO("name: !upper alice\n"), search_paths=[self.root], yaml_loader=UpperLoader
         ) == {"name": "ALICE"}
@@ -85,16 +84,10 @@ class TestLoader:
         with pytest.raises(yaml.YAMLError):
             load_yaml_file(ordinary)
         flat = self.write("flat.yaml", "%LOADER YamlCompose\n---\nchild: !include nested.yaml\n")
-        assert load_yaml_file(flat, yaml_loader=UpperLoader, recursive_dispatch=False) == {
-            "child": {"name": "BOB"}
-        }
+        assert load_yaml_file(flat, yaml_loader=UpperLoader, recursive_dispatch=False) == {"child": {"name": "BOB"}}
         self.write("headed.yaml", "%LOADER YamlCompose\n---\nname: !upper bob\n")
-        headed = self.write(
-            "headed-main.yaml", "%LOADER YamlCompose\n---\nchild: !include headed.yaml\n"
-        )
-        assert load_yaml_file(headed, yaml_loader=UpperLoader, recursive_dispatch=False) == {
-            "child": {"name": "BOB"}
-        }
+        headed = self.write("headed-main.yaml", "%LOADER YamlCompose\n---\nchild: !include headed.yaml\n")
+        assert load_yaml_file(headed, yaml_loader=UpperLoader, recursive_dispatch=False) == {"child": {"name": "BOB"}}
 
         duplicate = self.write("duplicate-custom.yaml", "name: one\nname: two\n")
         with pytest.raises(yaml.YAMLError, match="duplicate key"):
@@ -231,9 +224,7 @@ class TestLoader:
     @pytest.mark.parametrize("contents", ["value: 1\n", "name: example\n"])
     def test_spread_file_requires_a_sequence(self, contents: str) -> None:
         self.write("items.yaml", contents)
-        config = self.write(
-            "config.yaml", "%LOADER YamlCompose\n---\nitems:\n  - !spread [!include items.yaml]\n"
-        )
+        config = self.write("config.yaml", "%LOADER YamlCompose\n---\nitems:\n  - !spread [!include items.yaml]\n")
         with pytest.raises(yaml.YAMLError, match="!spread source must be a sequence"):
             load_yaml_file(config)
 
@@ -252,9 +243,7 @@ class TestLoader:
 
     def test_spread_tags_are_only_valid_as_sequence_items(self) -> None:
         self.write("items.yaml", "- remote\n")
-        config = self.write(
-            "config.yaml", "%LOADER YamlCompose\n---\nitems: !spread [!include items.yaml]\n"
-        )
+        config = self.write("config.yaml", "%LOADER YamlCompose\n---\nitems: !spread [!include items.yaml]\n")
         with pytest.raises(YamlIncludeError, match="only valid as a list item"):
             load_yaml_file(config)
 
@@ -265,9 +254,7 @@ class TestLoader:
 
     def test_spread_requires_one_source(self) -> None:
         for source in ("[]", "[[], []]"):
-            config = self.write(
-                "config.yaml", f"%LOADER YamlCompose\n---\nitems: [!spread {source}]\n"
-            )
+            config = self.write("config.yaml", f"%LOADER YamlCompose\n---\nitems: [!spread {source}]\n")
             with pytest.raises(yaml.YAMLError, match="expects exactly one sequence source"):
                 load_yaml_file(config)
 
@@ -276,32 +263,28 @@ class TestLoader:
         [
             ("value: !replace {port: 1}", "only valid in a deep mapping overlay"),
             (
-                    "base: &base {value: {host: localhost}}\n"
-                    "config: {<<: *base, value: !replace {port: 1}}",
-                    "only valid in a deep mapping overlay",
+                "base: &base {value: {host: localhost}}\nconfig: {<<: *base, value: !replace {port: 1}}",
+                "only valid in a deep mapping overlay",
             ),
             (
-                    "base: &base {value: {host: localhost}}\nconfig: {<<<: *base, value: !replace 1}",
-                    "expects a mapping or one mapping source",
+                "base: &base {value: {host: localhost}}\nconfig: {<<<: *base, value: !replace 1}",
+                "expects a mapping or one mapping source",
             ),
             (
-                    "base: &base {value: {host: localhost}}\n"
-                    "config: {<<<: *base, value: !replace [[one, two]]}",
-                    "source must be a mapping",
+                "base: &base {value: {host: localhost}}\nconfig: {<<<: *base, value: !replace [[one, two]]}",
+                "source must be a mapping",
             ),
             (
-                    "base: &base {value: {host: localhost}}\nconfig: {<<<: *base, value: !replace []}",
-                    "expects a mapping or one mapping source",
+                "base: &base {value: {host: localhost}}\nconfig: {<<<: *base, value: !replace []}",
+                "expects a mapping or one mapping source",
             ),
             (
-                    "base: &base {value: {host: localhost}}\n"
-                    "config: {<<<: *base, value: !replace [{one: 1}, {two: 2}]}",
-                    "expects a mapping or one mapping source",
+                "base: &base {value: {host: localhost}}\nconfig: {<<<: *base, value: !replace [{one: 1}, {two: 2}]}",
+                "expects a mapping or one mapping source",
             ),
             (
-                    "base: &base {value: {host: localhost}}\n"
-                    "config:\n  <<<: *base\n  value: !replace\n    host: !delete",
-                    "!delete is only valid inside a mapping overlay",
+                "base: &base {value: {host: localhost}}\nconfig:\n  <<<: *base\n  value: !replace\n    host: !delete",
+                "!delete is only valid inside a mapping overlay",
             ),
         ],
     )
@@ -342,9 +325,7 @@ class TestLoader:
         result = load_yaml_file(config)
         assert isinstance(result, dict)
         assert result["config"] == {"service": {"host": "localhost", "nested": {"right": 3}}}
-        assert result["base"] == {
-            "service": {"host": "localhost", "nested": {"left": 1, "right": 2}}
-        }
+        assert result["base"] == {"service": {"host": "localhost", "nested": {"left": 1, "right": 2}}}
 
     def test_spread_and_replace_files_share_the_include_budget(self) -> None:
         self.write("base.yaml", "settings: {old: true}\n")
@@ -385,9 +366,7 @@ class TestLoader:
         with pytest.raises(yaml.YAMLError, match="!extend"):
             load_yaml_file(config)
 
-    def test_nested_includes_resolve_from_the_including_file(
-            self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_nested_includes_resolve_from_the_including_file(self, monkeypatch: pytest.MonkeyPatch) -> None:
         main = self.write(
             "configs/main.yaml",
             "%LOADER YamlCompose\n---\nvalue: !include nested/value.yaml\n",
@@ -425,9 +404,7 @@ class TestLoader:
             f"%LOADER YamlCompose\n---\nvalue: !include {shared.as_posix()}\n",
             encoding="utf-8",
         )
-        assert load_yaml_file(config, allowed_roots=[shared.parent]) == {
-            "value": {"value": "shared"}
-        }
+        assert load_yaml_file(config, allowed_roots=[shared.parent]) == {"value": {"value": "shared"}}
 
         config.write_text(
             f"%LOADER YamlCompose\n---\nvalue: !include {outside.as_posix()}\n",
@@ -579,11 +556,7 @@ class TestLoader:
     def test_shallow_anchor_merge_works_in_composition_documents(self) -> None:
         config = self.write(
             "anchors.yaml",
-            "%LOADER YamlCompose\n"
-            "---\n"
-            "defaults: &defaults {host: localhost}\n"
-            "service:\n"
-            "  <<: *defaults\n",
+            "%LOADER YamlCompose\n---\ndefaults: &defaults {host: localhost}\nservice:\n  <<: *defaults\n",
         )
         assert load_yaml_file(config) == {
             "defaults": {"host": "localhost"},
@@ -593,9 +566,7 @@ class TestLoader:
     def test_merge_keys_may_not_be_combined_in_one_mapping(self) -> None:
         config = self.write(
             "anchors.yaml",
-            "%LOADER YamlCompose\n---\n"
-            "base: &base {host: localhost}\n"
-            "service: {<<: *base, <<<: *base}\n",
+            "%LOADER YamlCompose\n---\nbase: &base {host: localhost}\nservice: {<<: *base, <<<: *base}\n",
         )
         with pytest.raises(yaml.YAMLError, match="only one << or <<< key"):
             load_yaml_file(config)

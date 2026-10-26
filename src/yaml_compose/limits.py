@@ -13,6 +13,7 @@ from dataclasses import dataclass
 
 from ._unset import UNSET, UnsetType
 
+
 def _resolve_limit(value: int | UnsetType | None, default: int | None) -> int | None:
     if isinstance(value, UnsetType):
         return default
@@ -22,10 +23,12 @@ def _resolve_limit(value: int | UnsetType | None, default: int | None) -> int | 
         return max(0, value)
     raise ValueError("limit must be an integer or None")
 
+
 _DEFAULT_MAX_INCLUDE_DEPTH = 32
 _DEFAULT_MAX_INCLUDE_FILES = 1024
 _DEFAULT_MAX_FILE_BYTES = 8_388_608
 _DEFAULT_MAX_TOTAL_INCLUDE_BYTES = 67_108_864
+
 
 @dataclass(slots=True)
 class IncludeLimits:
@@ -50,12 +53,14 @@ class IncludeLimits:
             or ``None``.
 
     """
+
     max_include_depth: int | None = _DEFAULT_MAX_INCLUDE_DEPTH
     max_include_files: int | None = _DEFAULT_MAX_INCLUDE_FILES
     max_file_bytes: int | None = _DEFAULT_MAX_FILE_BYTES
     max_total_include_bytes: int | None = _DEFAULT_MAX_TOTAL_INCLUDE_BYTES
 
     def __post_init__(self):
+        """Validate fields on construction."""
         if self.max_include_depth is not None and self.max_include_depth < 0:
             raise ValueError("max_include_depth must be non-negative")
         if self.max_include_files is not None and self.max_include_files < 0:
@@ -65,8 +70,10 @@ class IncludeLimits:
         if self.max_total_include_bytes is not None and self.max_total_include_bytes < 0:
             raise ValueError("max_total_include_bytes must be non-negative")
 
+
 DEFAULT_INCLUDE_LIMITS = IncludeLimits()
 _configured_default_limits = DEFAULT_INCLUDE_LIMITS
+
 
 def get_default_include_limits() -> IncludeLimits:
     """Return the active defaults for new top-level loads and loader instances.
@@ -75,6 +82,7 @@ def get_default_include_limits() -> IncludeLimits:
     and ``set_default_include_limits`` to change selected fields.
     """
     return copy(_configured_default_limits)
+
 
 def set_default_include_limits(limits: IncludeLimits) -> None:
     """Replace the process-wide defaults for future loads and loader instances.
@@ -91,13 +99,14 @@ def set_default_include_limits(limits: IncludeLimits) -> None:
     global _configured_default_limits
     _configured_default_limits = copy(limits)
 
+
 def resolve_include_limits(
-        max_include_depth: int | UnsetType | None,
-        max_include_files: int | UnsetType | None,
-        max_file_bytes: int | UnsetType | None,
-        max_total_include_bytes: int | UnsetType | None,
-        *,
-        include_limits: IncludeLimits | UnsetType = UNSET,
+    max_include_depth: int | UnsetType | None,
+    max_include_files: int | UnsetType | None,
+    max_file_bytes: int | UnsetType | None,
+    max_total_include_bytes: int | UnsetType | None,
+    *,
+    include_limits: IncludeLimits | UnsetType = UNSET,
 ) -> IncludeLimits:
     """Combine a reusable profile and individual overrides into one snapshot.
 

@@ -39,9 +39,7 @@ def resolve_include_file(
         candidates.append(current_file.parent / requested)
     else:
         local = current_file.parent if current_file is not None else None
-        candidates.extend(
-            root / requested for root in search_locations(local, search_paths, include_search)
-        )
+        candidates.extend(root / requested for root in search_locations(local, search_paths, include_search))
 
     for candidate in candidates:
         try:

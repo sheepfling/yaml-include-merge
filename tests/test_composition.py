@@ -80,9 +80,7 @@ def layered_sources() -> dict[str, str]:
         "shared/deployment_steps.yaml": "[shared-deployment]\n",
     }
     for label, directory in (("local", "app/env"), ("shared", "shared")):
-        sources[f"{directory}/region.yaml"] = (
-            "<<<: !include ./defaults.yaml\nservice:\n  nested: {timeout: 40}\n"
-        )
+        sources[f"{directory}/region.yaml"] = "<<<: !include ./defaults.yaml\nservice:\n  nested: {timeout: 40}\n"
         sources[f"{directory}/defaults.yaml"] = (
             yaml.safe_dump(
                 {
@@ -120,9 +118,9 @@ def load_layered_project(
         write_sources(test_path, layered_sources)
 
         def load(policy: IncludeSearch) -> object:
-            return YamlConfigLoader(
-                search_paths=[test_path / "shared"], include_search=policy
-            ).load_file(test_path / "app" / "main.yaml")
+            return YamlConfigLoader(search_paths=[test_path / "shared"], include_search=policy).load_file(
+                test_path / "app" / "main.yaml"
+            )
 
     else:
         root = MemoryRoot("layered-composition")
@@ -134,9 +132,7 @@ def load_layered_project(
         resolver = MemoryIncludeResolver(root, files)
 
         def load(policy: IncludeSearch) -> object:
-            return YamlConfigLoader(
-                include_resolver=resolver, allowed_roots=[root], include_search=policy
-            ).load_stream(
+            return YamlConfigLoader(include_resolver=resolver, allowed_roots=[root], include_search=policy).load_stream(
                 StringIO(files["app/main.yaml"]),
                 source=MemorySource(root, PurePosixPath("app/main.yaml")),
             )

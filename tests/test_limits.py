@@ -7,8 +7,20 @@ from typing import cast
 import pytest
 import yaml
 
-from yaml_compose import (DEFAULT_INCLUDE_LIMITS, IncludeLimits, MemoryIncludeResolver, MemoryRoot, MemorySource, UNSET,
-                          UnsetType, YamlConfigLoader, load_yaml_compose, load_yaml_dispatch, load_yaml_file)
+from yaml_compose import (
+    DEFAULT_INCLUDE_LIMITS,
+    UNSET,
+    IncludeLimits,
+    MemoryIncludeResolver,
+    MemoryRoot,
+    MemorySource,
+    UnsetType,
+    YamlConfigLoader,
+    load_yaml_compose,
+    load_yaml_dispatch,
+    load_yaml_file,
+)
+
 
 @pytest.fixture
 def included_config(test_path: Path) -> Path:
@@ -17,11 +29,12 @@ def included_config(test_path: Path) -> Path:
     config.write_text("%LOADER YamlCompose\n---\n<<<: !include ./base.yaml\n", encoding="utf-8")
     return config
 
+
 def load_profile(
-        entry: str,
-        config: Path,
-        profile: IncludeLimits,
-        files: int | UnsetType | None = UNSET,
+    entry: str,
+    config: Path,
+    profile: IncludeLimits,
+    files: int | UnsetType | None = UNSET,
 ) -> object:
     if entry == "file":
         return load_yaml_file(config, include_limits=profile, max_include_files=files)
@@ -47,16 +60,16 @@ def load_profile(
         return loader.load_stream(StringIO(text), source_path=config)
     return loader.load_include(StringIO(text), source_path=config)
 
+
 def test_default_profile_is_bounded_inspectable_and_immutable() -> None:
     assert IncludeLimits() == DEFAULT_INCLUDE_LIMITS
     assert YamlConfigLoader().include_limits == DEFAULT_INCLUDE_LIMITS
 
-@pytest.mark.parametrize(
-    "entry", ["file", "dispatch", "compose", "facade-file", "facade-stream", "facade-include"]
-)
+
+@pytest.mark.parametrize("entry", ["file", "dispatch", "compose", "facade-file", "facade-stream", "facade-include"])
 def test_profiles_apply_to_every_entry_point_and_individual_overrides_win(
-        included_config: Path,
-        entry: str,
+    included_config: Path,
+    entry: str,
 ) -> None:
     profile = IncludeLimits(max_include_files=0)
     with pytest.raises(yaml.YAMLError, match="maximum include count"):
@@ -64,6 +77,7 @@ def test_profiles_apply_to_every_entry_point_and_individual_overrides_win(
     assert load_profile(entry, included_config, profile, files=1) == {"value": 1}
     assert load_profile(entry, included_config, profile, files=None) == {"value": 1}
     assert profile.max_include_files == 0
+
 
 def test_loader_effective_profile_tracks_individual_overrides(included_config: Path) -> None:
     profile = IncludeLimits(max_include_files=0)
@@ -77,6 +91,7 @@ def test_loader_effective_profile_tracks_individual_overrides(included_config: P
     assert loader.load_file(included_config) == {"value": 1}
     assert profile.max_include_files == 0
 
+
 @pytest.mark.parametrize("invalid", [None, object(), {}])
 def test_invalid_profile_types_are_rejected(included_config: Path, invalid: object) -> None:
     profile = cast(IncludeLimits, invalid)
@@ -85,26 +100,27 @@ def test_invalid_profile_types_are_rejected(included_config: Path, invalid: obje
     with pytest.raises(TypeError, match="IncludeLimits instance"):
         load_yaml_file(included_config, include_limits=profile)
 
+
 def test_zero_profiles_remain_valid_and_enforced(included_config: Path) -> None:
     profile = IncludeLimits(max_include_depth=0)
     assert profile.max_include_depth == 0
     with pytest.raises(yaml.YAMLError, match=r"maximum include depth \(0\)"):
         load_yaml_file(included_config, include_limits=profile)
 
+
 def test_shared_profile_has_no_per_load_counter_state() -> None:
     root = MemoryRoot("shared-limit-test")
     profile = IncludeLimits(max_include_files=1)
-    expected_data = {'value', 1}
+    expected_data = {"value", 1}
     resolver = MemoryIncludeResolver(root, {"base.yaml": yaml.dump(expected_data)})
     source = MemorySource(root, PurePosixPath("main.yaml"))
     for _ in range(2):
-        loader = YamlConfigLoader(
-            include_resolver=resolver, allowed_roots=[root], include_limits=profile
-        )
+        loader = YamlConfigLoader(include_resolver=resolver, allowed_roots=[root], include_limits=profile)
         for _ in range(2):
             assert loader.load_include(StringIO("!include ./base.yaml\n"), source=source) == expected_data
         assert loader.include_limits == profile
     assert profile.max_include_files == 1
+
 
 def test_default_file_budget_accepts_large_fanout_and_still_enforces_its_bound() -> None:
     root = MemoryRoot("default-fanout")
@@ -114,24 +130,21 @@ def test_default_file_budget_accepts_large_fanout_and_still_enforces_its_bound()
     )
     source = MemorySource(root, PurePosixPath("main.yaml"))
     document = "items:\n" + "  - !include ./shared.yaml\n" * 1024
-    assert loader.load_include(StringIO(document), source=source) == {
-        "items": [{"value": 1}] * 1024
-    }
+    assert loader.load_include(StringIO(document), source=source) == {"items": [{"value": 1}] * 1024}
     with pytest.raises(yaml.YAMLError, match=r"maximum include count \(1024\)"):
         loader.load_include(StringIO(document + "  - !include ./shared.yaml\n"), source=source)
+
 
 def test_default_depth_accepts_32_levels_and_rejects_the_next() -> None:
     root = MemoryRoot("default-depth")
     source = MemorySource(root, PurePosixPath("main.yaml"))
 
     def load(depth: int) -> object:
-        files = {
-            f"level-{i}.yaml": f"child: !include ./level-{i + 1}.yaml\n" for i in range(depth - 1)
-        }
+        files = {f"level-{i}.yaml": f"child: !include ./level-{i + 1}.yaml\n" for i in range(depth - 1)}
         files[f"level-{depth - 1}.yaml"] = "value: done\n"
-        return YamlConfigLoader(
-            include_resolver=MemoryIncludeResolver(root, files), allowed_roots=[root]
-        ).load_include(StringIO("child: !include ./level-0.yaml\n"), source=source)
+        return YamlConfigLoader(include_resolver=MemoryIncludeResolver(root, files), allowed_roots=[root]).load_include(
+            StringIO("child: !include ./level-0.yaml\n"), source=source
+        )
 
     value = load(32)
     for _ in range(32):
@@ -140,6 +153,7 @@ def test_default_depth_accepts_32_levels_and_rejects_the_next() -> None:
     assert value == {"value": "done"}
     with pytest.raises(yaml.YAMLError, match=r"maximum include depth \(32\)"):
         load(33)
+
 
 def test_default_byte_budget_accepts_a_multi_megabyte_include() -> None:
     root = MemoryRoot("default-bytes")

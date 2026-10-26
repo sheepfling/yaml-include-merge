@@ -17,9 +17,7 @@ def test_release_cli_accepts_process_or_explicit_arguments(
     test_path: Path, monkeypatch: pytest.MonkeyPatch, process_arguments: bool
 ) -> None:
     arguments = ["build", "--output", str(test_path)]
-    monkeypatch.setattr(
-        sys, "argv", ["release", *arguments] if process_arguments else ["unrelated"]
-    )
+    monkeypatch.setattr(sys, "argv", ["release", *arguments] if process_arguments else ["unrelated"])
     outputs: list[Path] = []
 
     def build(*, output: Path) -> tuple[Path, ...]:
@@ -95,9 +93,7 @@ def test_failed_build_or_validation_is_reported(
         release.build_release(output=test_path, tag="v1.2.3")
 
 
-def test_wrong_tag_does_not_remove_existing_output(
-    test_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_wrong_tag_does_not_remove_existing_output(test_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(release, "project_version", lambda: "1.2.3")
     wheel = test_path / "keep.whl"
     wheel.touch()

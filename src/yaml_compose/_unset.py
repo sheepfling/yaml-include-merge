@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import cast
 
+
 class UnsetType:
     """Sentinel type distinguishing an omitted argument from explicit ``None``."""
 
@@ -17,5 +18,6 @@ class UnsetType:
 
     def __repr__(self) -> str:
         return "UNSET"
+
 
 UNSET = UnsetType()

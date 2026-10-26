@@ -33,9 +33,7 @@ def verify_tag(tag: str | None = None) -> None:
         raise ReleaseError("RELEASE_TAG is required for a release build")
     version = project_version()
     if release_tag.removeprefix("v") != version:
-        raise ReleaseError(
-            f"release tag {release_tag!r} does not match project version {version!r}"
-        )
+        raise ReleaseError(f"release tag {release_tag!r} does not match project version {version!r}")
 
 
 def build_distributions(*, root: Path, output: Path) -> tuple[Path, ...]:
@@ -57,12 +55,8 @@ def build_distributions(*, root: Path, output: Path) -> tuple[Path, ...]:
     result = subprocess.run(command, cwd=root, env=environment, check=False)
     if result.returncode:
         raise ReleaseError(f"distribution build failed with status {result.returncode}")
-    wheels = tuple(
-        path for path in output.glob("*.whl") if path.is_file() and not path.is_symlink()
-    )
-    sources = tuple(
-        path for path in output.glob("*.tar.gz") if path.is_file() and not path.is_symlink()
-    )
+    wheels = tuple(path for path in output.glob("*.whl") if path.is_file() and not path.is_symlink())
+    sources = tuple(path for path in output.glob("*.tar.gz") if path.is_file() and not path.is_symlink())
     if len(wheels) != 1 or len(sources) != 1:
         raise ReleaseError("build must produce one wheel and one source distribution")
     distributions = (*wheels, *sources)

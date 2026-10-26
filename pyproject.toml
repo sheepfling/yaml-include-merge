@@ -72,7 +72,7 @@ skip_covered = true
 fail_under = 80
 
 [tool.ruff]
-line-length = 100
+line-length = 120
 target-version = "py310"
 
 [tool.ruff.lint]
@@ -93,7 +93,7 @@ pythonVersion = "3.10"
 typeCheckingMode = "strict"
 
 [tool.rumdl]
-line-length = 100
+line-length = 120
 extend-enable = ["MD029", "MD060"]
 
 [tool.rumdl.MD029]
@@ -103,7 +103,7 @@ style = "ordered"
 style = "aligned"
 
 [tool.rumdl.MD013]
-line-length = 100
+line-length = 120
 
 [tool.mdrepo]
 include = ["*.md", "**/*.md"]

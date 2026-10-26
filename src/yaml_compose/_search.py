@@ -18,21 +18,20 @@ _INCLUDE_SEARCH_CHOICES: tuple[str, ...] = get_args(IncludeSearch)
 
 _TPath = TypeVar("_TPath", bound=PurePath)
 
+
 def validate_include_search(value: object) -> IncludeSearch:
     """Reject unknown lookup policies before any document is loaded."""
     if not isinstance(value, str) or value not in _INCLUDE_SEARCH_CHOICES:
-        raise ValueError(
-            "include_search must be " + ", ".join(repr(x) for x in _INCLUDE_SEARCH_CHOICES)
-        )
+        raise ValueError("include_search must be " + ", ".join(repr(x) for x in _INCLUDE_SEARCH_CHOICES))
     return cast(IncludeSearch, value)
+
 
 def is_explicit_relative(name: str) -> bool:
     """Recognize a containing-file reference before path normalization removes dots."""
     return name in (".", "..") or name.startswith(("./", "../", ".\\", "..\\"))
 
-def search_locations(
-        local: _TPath | None, search_paths: Iterable[_TPath], policy: IncludeSearch
-) -> tuple[_TPath, ...]:
+
+def search_locations(local: _TPath | None, search_paths: Iterable[_TPath], policy: IncludeSearch) -> tuple[_TPath, ...]:
     """Order candidate directories without changing which roots are authorized."""
     validate_include_search(policy)
     nearby = () if local is None else (local,)

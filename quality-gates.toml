@@ -49,8 +49,8 @@ initializer_limit = 150
 [checks.line_length]
 
 [checks.line_length.limits]
-".py" = 100
-".md" = 100
+".py" = 120
+".md" = 120
 
 [checks.json_structure]
 extensions = [".py"]

@@ -40,16 +40,11 @@ def write(root: Path, name: str, body: str) -> Path:
         ("search-only", "search"),
     ],
 )
-def test_bare_names_follow_the_selected_search_policy(
-    test_path: Path, policy: IncludeSearch, expected: str
-) -> None:
+def test_bare_names_follow_the_selected_search_policy(test_path: Path, policy: IncludeSearch, expected: str) -> None:
     write(test_path, "app/value.yaml", "local\n")
     write(test_path, "shared/value.yaml", "search\n")
     config = write(test_path, "app/main.yaml", "%LOADER YamlCompose\n---\n!include value.yaml\n")
-    assert (
-        load_yaml_file(config, search_paths=[test_path / "shared"], include_search=policy)
-        == expected
-    )
+    assert load_yaml_file(config, search_paths=[test_path / "shared"], include_search=policy) == expected
     assert load_yaml_file(config, search_paths=[test_path / "shared"]) == "local"
 
 
@@ -71,9 +66,7 @@ def test_explicit_relative_paths_bypass_search_precedence(
 
 
 @pytest.mark.parametrize("policy", ["local-first", "search-first", "local-only", "search-only"])
-def test_missing_explicit_relative_paths_never_fall_back(
-    test_path: Path, policy: IncludeSearch
-) -> None:
+def test_missing_explicit_relative_paths_never_fall_back(test_path: Path, policy: IncludeSearch) -> None:
     write(test_path, "shared/value.yaml", "search\n")
     config = write(test_path, "app/main.yaml", "%LOADER YamlCompose\n---\n!include ./value.yaml\n")
     with pytest.raises(yaml.YAMLError, match="was not found"):
@@ -97,9 +90,7 @@ def test_search_directories_keep_the_callers_order(test_path: Path, policy: Incl
     write(test_path, "second/value.yaml", "second\n")
     config = write(test_path, "app/main.yaml", "%LOADER YamlCompose\n---\n!include value.yaml\n")
     assert (
-        load_yaml_file(
-            config, search_paths=[test_path / "first", test_path / "second"], include_search=policy
-        )
+        load_yaml_file(config, search_paths=[test_path / "first", test_path / "second"], include_search=policy)
         == "first"
     )
 
@@ -120,22 +111,15 @@ def test_nested_includes_use_their_own_directory_and_inherit_the_policy(
     write(test_path, "app/nested/value.yaml", "near-child\n")
     write(test_path, "app/nested/child.yaml", "value: !include value.yaml\n")
     write(test_path, "shared/value.yaml", "shared\n")
-    config = write(
-        test_path, "app/main.yaml", "%LOADER YamlCompose\n---\n!include ./nested/child.yaml\n"
-    )
-    assert load_yaml_file(config, search_paths=[test_path / "shared"], include_search=policy) == {
-        "value": expected
-    }
+    config = write(test_path, "app/main.yaml", "%LOADER YamlCompose\n---\n!include ./nested/child.yaml\n")
+    assert load_yaml_file(config, search_paths=[test_path / "shared"], include_search=policy) == {"value": expected}
 
 
 def test_local_fallback_works_after_all_search_directories_miss(test_path: Path) -> None:
     (test_path / "shared").mkdir()
     write(test_path, "app/value.yaml", "local\n")
     config = write(test_path, "app/main.yaml", "%LOADER YamlCompose\n---\n!include value.yaml\n")
-    assert (
-        load_yaml_file(config, search_paths=[test_path / "shared"], include_search="search-first")
-        == "local"
-    )
+    assert load_yaml_file(config, search_paths=[test_path / "shared"], include_search="search-first") == "local"
 
 
 def test_explicit_relative_paths_require_a_source_even_with_search_directories(
@@ -156,19 +140,13 @@ def test_explicit_relative_paths_require_a_source_even_with_search_directories(
 
 def test_absolute_names_resolve_exactly_under_any_policy(test_path: Path) -> None:
     value = write(test_path, "value.yaml", "exact\n")
-    config = write(
-        test_path, "main.yaml", f"%LOADER YamlCompose\n---\n!include {value.as_posix()}\n"
-    )
+    config = write(test_path, "main.yaml", f"%LOADER YamlCompose\n---\n!include {value.as_posix()}\n")
     assert load_yaml_file(config, include_search="search-only") == "exact"
     assert load_yaml_file(config, allow_absolute_includes=True) == "exact"
 
 
-@pytest.mark.parametrize(
-    "entry", ["file", "dispatch", "compose", "facade-file", "facade-stream", "facade-include"]
-)
-def test_absolute_include_policy_is_forwarded_by_every_entry_point(
-    test_path: Path, entry: str
-) -> None:
+@pytest.mark.parametrize("entry", ["file", "dispatch", "compose", "facade-file", "facade-stream", "facade-include"])
+def test_absolute_include_policy_is_forwarded_by_every_entry_point(test_path: Path, entry: str) -> None:
     value = write(test_path, "value.yaml", "exact\n")
     include = f"!include {value.as_posix()}\n"
     document = f"%LOADER YamlCompose\n---\n{include}"
@@ -179,9 +157,7 @@ def test_absolute_include_policy_is_forwarded_by_every_entry_point(
         if entry == "file":
             load_yaml_file(config, allow_absolute_includes=False)
         elif entry == "dispatch":
-            load_yaml_dispatch(
-                StringIO(document), source_path=config, allow_absolute_includes=False
-            )
+            load_yaml_dispatch(StringIO(document), source_path=config, allow_absolute_includes=False)
         elif entry == "compose":
             load_yaml_compose(StringIO(include), source_path=config, allow_absolute_includes=False)
         elif entry == "facade-file":
@@ -207,9 +183,7 @@ def test_absolute_include_is_rejected_before_custom_resolver(test_path: Path) ->
             raise AssertionError(f"resolver called for {request.name!r}")
 
     value = write(test_path, "value.yaml", "exact\n")
-    config = write(
-        test_path, "main.yaml", f"%LOADER YamlCompose\n---\n!include {value.as_posix()}\n"
-    )
+    config = write(test_path, "main.yaml", f"%LOADER YamlCompose\n---\n!include {value.as_posix()}\n")
     with pytest.raises(yaml.YAMLError, match="include paths must be relative paths"):
         load_yaml_file(config, include_resolver=UnexpectedResolver(), allow_absolute_includes=False)
 
@@ -218,13 +192,9 @@ def test_disallowing_absolute_paths_keeps_parent_paths_within_allowed_roots(
     test_path: Path,
 ) -> None:
     write(test_path, "shared.yaml", "inside\n")
-    config = write(
-        test_path, "app/main.yaml", "%LOADER YamlCompose\n---\n!include ../shared.yaml\n"
-    )
+    config = write(test_path, "app/main.yaml", "%LOADER YamlCompose\n---\n!include ../shared.yaml\n")
 
-    assert (
-        load_yaml_file(config, allowed_roots=[test_path], allow_absolute_includes=False) == "inside"
-    )
+    assert load_yaml_file(config, allowed_roots=[test_path], allow_absolute_includes=False) == "inside"
     with pytest.raises(yaml.YAMLError, match="outside the allowed roots"):
         load_yaml_file(config, allow_absolute_includes=False)
 
@@ -234,10 +204,7 @@ def test_platform_relative_prefix_stays_pinned_under_search_first(test_path: Pat
     write(test_path, "shared/value.yaml", "shared\n")
     reference = f".{os.sep}value.yaml"
     config = write(test_path, "app/main.yaml", f"%LOADER YamlCompose\n---\n!include {reference}\n")
-    assert (
-        load_yaml_file(config, search_paths=[test_path / "shared"], include_search="search-first")
-        == "local"
-    )
+    assert load_yaml_file(config, search_paths=[test_path / "shared"], include_search="search-first") == "local"
 
 
 @pytest.mark.parametrize("policy", ["local-first", "search-first"])
@@ -337,9 +304,7 @@ def test_memory_resolver_applies_policies_between_local_and_namespace_root(
 ) -> None:
     root = MemoryRoot("search")
     resolver = MemoryIncludeResolver(root, {"nested/value.yaml": "local\n", "value.yaml": "root\n"})
-    loader = YamlConfigLoader(
-        include_resolver=resolver, allowed_roots=[root], include_search=policy
-    )
+    loader = YamlConfigLoader(include_resolver=resolver, allowed_roots=[root], include_search=policy)
     source = MemorySource(root, PurePosixPath("nested/main.yaml"))
     assert loader.load_include(StringIO("!include value.yaml\n"), source=source) == expected
     assert loader.load_include(StringIO("!include ./value.yaml\n"), source=source) == "local"

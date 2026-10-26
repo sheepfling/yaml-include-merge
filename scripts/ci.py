@@ -20,9 +20,7 @@ Mode = Literal["all", "python", "tests", "quality"]
 
 def _rumdl_command() -> str:
     """Find rumdl in the active Python environment, including Windows Scripts."""
-    environment_path = os.pathsep.join(
-        (str(Path(sys.executable).parent), os.environ.get("PATH", ""))
-    )
+    environment_path = os.pathsep.join((str(Path(sys.executable).parent), os.environ.get("PATH", "")))
     executable = shutil.which("rumdl", path=environment_path)
     if executable is not None:
         return executable
@@ -31,8 +29,7 @@ def _rumdl_command() -> str:
         if sibling.exists():
             return str(sibling)
     raise FileNotFoundError(
-        "rumdl is not installed; install development dependencies with "
-        '`python -m pip install -e ".[dev]"`'
+        'rumdl is not installed; install development dependencies with `python -m pip install -e ".[dev]"`'
     )
 
 

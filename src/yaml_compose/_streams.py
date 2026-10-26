@@ -4,10 +4,12 @@ from typing import BinaryIO, cast
 
 _DEFAULT_MAX_CHUNK_SIZE = 65_536
 
+
 def _read_binary_chunk(stream: BinaryIO, size: int) -> bytes | None:
     """Keep a resolver's possibly non-blocking read result at the boundary."""
     value: object = stream.read(size)
     return cast(bytes | None, value)
+
 
 def read_bounded(stream: BinaryIO, limit: int | None, max_chunk_size: int | None = None) -> bytes:
     """Read a binary stream in chunks, stopping at ``limit`` or EOF.
@@ -17,10 +19,7 @@ def read_bounded(stream: BinaryIO, limit: int | None, max_chunk_size: int | None
     """
     content = bytearray()
     remaining = limit
-    if max_chunk_size is None or max_chunk_size < 1:
-        chunk_size = _DEFAULT_MAX_CHUNK_SIZE
-    else:
-        chunk_size = max_chunk_size
+    chunk_size = _DEFAULT_MAX_CHUNK_SIZE if (max_chunk_size is None or max_chunk_size < 1) else max_chunk_size
     while remaining is None or remaining > 0:
         requested = min(remaining, chunk_size) if remaining is not None else chunk_size
         chunk = _read_binary_chunk(stream, requested)
