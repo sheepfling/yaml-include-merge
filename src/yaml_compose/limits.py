@@ -15,15 +15,8 @@ from ._unset import UNSET, UnsetType
 
 
 def _resolve_limit(value: int | UnsetType | None, default: int | None) -> int | None:
-    if isinstance(value, UnsetType):
-        return default
-    if value is None:
-        return None
-    if type(value) is int:
-        if value < 0:
-            raise ValueError("limit must be a non-negative integer or None")
-        return value
-    raise ValueError("limit must be an integer or None")
+    """Resolve an omitted override; the resulting profile validates its fields."""
+    return default if isinstance(value, UnsetType) else value
 
 
 _DEFAULT_MAX_INCLUDE_DEPTH = 32
@@ -40,6 +33,7 @@ class IncludeLimits:
     a fresh count. A non-negative integer enforces a bound; zero forbids any
     use of that resource; ``None`` leaves that resource unbounded. Booleans,
     negative numbers, and other values raise ``ValueError``.
+    ``UNSET`` is reserved for omitted function arguments, not profile fields.
 
     These are package policy choices for configuration composition, not YAML
     specification limits. File and byte counts include repeated reads of the
@@ -61,12 +55,16 @@ class IncludeLimits:
     max_file_bytes: int | None = _DEFAULT_MAX_FILE_BYTES
     max_total_include_bytes: int | None = _DEFAULT_MAX_TOTAL_INCLUDE_BYTES
 
-    def __post_init__(self):
-        """Validate fields on construction."""
-        _resolve_limit(self.max_include_depth, None)
-        _resolve_limit(self.max_include_files, None)
-        _resolve_limit(self.max_file_bytes, None)
-        _resolve_limit(self.max_total_include_bytes, None)
+    def __post_init__(self) -> None:
+        """Reject invalid bounds before a limits profile can be used."""
+        values = (
+            self.max_include_depth,
+            self.max_include_files,
+            self.max_file_bytes,
+            self.max_total_include_bytes,
+        )
+        if any(value is not None and (type(value) is not int or value < 0) for value in values):
+            raise ValueError("include limits must be non-negative integers or None")
 
 
 def _copy_limits(limits: IncludeLimits) -> IncludeLimits:

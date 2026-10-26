@@ -101,6 +101,25 @@ def test_invalid_profile_types_are_rejected(included_config: Path, invalid: obje
         load_yaml_file(included_config, include_limits=profile)
 
 
+@pytest.mark.parametrize(
+    "field", ["max_include_depth", "max_include_files", "max_file_bytes", "max_total_include_bytes"]
+)
+@pytest.mark.parametrize("invalid", [UNSET, True, -1, 1.5, "3"])
+def test_invalid_limit_fields_are_rejected(field: str, invalid: object) -> None:
+    with pytest.raises(ValueError, match="limit"):
+        IncludeLimits(**{field: cast(int | None, invalid)})
+
+
+@pytest.mark.parametrize(
+    "field", ["max_include_depth", "max_include_files", "max_file_bytes", "max_total_include_bytes"]
+)
+def test_mutated_profile_cannot_introduce_unset_into_a_load(field: str) -> None:
+    loader = YamlConfigLoader()
+    setattr(loader.include_limits, field, UNSET)
+    with pytest.raises(ValueError, match="limit"):
+        loader.load_stream(StringIO("value: 1\n"))
+
+
 def test_zero_profiles_remain_valid_and_enforced(included_config: Path) -> None:
     profile = IncludeLimits(max_include_depth=0)
     assert profile.max_include_depth == 0

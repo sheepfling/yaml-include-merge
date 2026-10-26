@@ -119,7 +119,7 @@ def _read_text_input(stream: TextIO) -> object:
 def _stream_identity(stream: TextIO) -> _StreamIdentity:
     """Read a stream name once as a normalized file path or a display label."""
     name = getattr(stream, "name", None)
-    if name is None:
+    if not isinstance(name, (str, os.PathLike)):
         return _StreamIdentity(None, "<yaml stream>")
     value = cast(str | bytes, os.fspath(name))
     if not isinstance(value, str) or (value and value.startswith("<") and value.endswith(">")):

@@ -41,6 +41,23 @@ class TestLoader:
         with pytest.raises(yaml.YAMLError, match="duplicate key"):
             load_yaml_file(duplicate)
 
+    @pytest.mark.parametrize("entry", ["dispatch", "compose", "facade-stream", "facade-include"])
+    @pytest.mark.parametrize("document", ["value: 1\n", "%LOADER YamlCompose\n---\nvalue: !include base.yaml\n"])
+    def test_file_descriptor_streams_do_not_require_a_path_name(self, entry: str, document: str) -> None:
+        self.write("base.yaml", "1\n")
+        config = self.write("stream.yaml", document)
+        loader = YamlConfigLoader(search_paths=[self.root])
+        with os.fdopen(os.open(config, os.O_RDONLY), "r", encoding="utf-8") as stream:
+            if entry == "dispatch":
+                result = load_yaml_dispatch(stream, search_paths=[self.root])
+            elif entry == "compose":
+                result = load_yaml_compose(stream, search_paths=[self.root])
+            elif entry == "facade-stream":
+                result = loader.load_stream(stream)
+            else:
+                result = loader.load_include(stream)
+        assert result == {"value": 1}
+
     def test_pyyaml_scalar_resolution_is_retained(self) -> None:
         text = "enabled: on\nanswer: yes\nlegacy_number: 010\n"
         expected = {"enabled": True, "answer": True, "legacy_number": 8}
