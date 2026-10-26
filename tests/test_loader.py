@@ -509,9 +509,13 @@ class TestLoader:
             load_yaml_file(config, max_include_files=0)
 
     def test_library_include_limits_are_inspectable_and_configurable(self) -> None:
+        assert DEFAULT_INCLUDE_LIMITS.max_include_depth is not None
         assert DEFAULT_INCLUDE_LIMITS.max_include_depth > 0
+        assert DEFAULT_INCLUDE_LIMITS.max_include_files is not None
         assert DEFAULT_INCLUDE_LIMITS.max_include_files > 0
+        assert DEFAULT_INCLUDE_LIMITS.max_file_bytes is not None
         assert DEFAULT_INCLUDE_LIMITS.max_file_bytes > 0
+        assert DEFAULT_INCLUDE_LIMITS.max_total_include_bytes is not None
         assert DEFAULT_INCLUDE_LIMITS.max_total_include_bytes > 0
 
         self.write("base.yaml", "value: loaded\n")

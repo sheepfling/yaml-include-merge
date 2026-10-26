@@ -121,7 +121,7 @@ def _stream_identity(stream: TextIO) -> _StreamIdentity:
     name = getattr(stream, "name", None)
     if name is None:
         return _StreamIdentity(None, "<yaml stream>")
-    value = os.fspath(name)
+    value = cast(str | bytes, os.fspath(name))
     if not isinstance(value, str) or (value and value.startswith("<") and value.endswith(">")):
         return _StreamIdentity(None, "<yaml stream>")
     path = Path(value).resolve(strict=True)
@@ -313,7 +313,7 @@ class IncludeLoader(SafeLoader):
         self.load_stack = tuple(load_stack)
         self.budget = budget
         self.yaml_loader = yaml_loader
-        self.include_search = validate_include_search(include_search)
+        self.include_search: IncludeSearch = validate_include_search(include_search)
         self.allow_absolute_includes = bool(allow_absolute_includes)
         self.include_resolver = include_resolver or FileSystemIncludeResolver()
         self.source = source or (FileSource(current_file) if current_file is not None else None)
@@ -350,7 +350,7 @@ class IncludeLoader(SafeLoader):
                 f"{SPREAD_TAG} source must be a sequence",
                 node.value[0].start_mark,
             )
-        return _SpreadMarker(source)
+        return _SpreadMarker(cast(list[object], source))
 
     def _construct_replace(self, node: Node) -> _ReplaceMarker:
         if isinstance(node, MappingNode):
@@ -371,7 +371,7 @@ class IncludeLoader(SafeLoader):
                 f"{REPLACE_TAG} source must be a mapping",
                 node.start_mark,
             )
-        mapping_source = source
+        mapping_source = cast(YamlDict, source)
         _assert_no_overlay_markers(mapping_source)
         return _ReplaceMarker(mapping_source, node.start_mark)
 
@@ -669,7 +669,7 @@ def _load_composed_text(
     try:
         result = loader.get_single_data()
     finally:
-        loader.dispose()
+        loader.dispose()  # pyright: ignore[reportUnknownMemberType]
     _assert_no_overlay_markers(result)
     return result
 
@@ -732,8 +732,8 @@ def load_yaml_dispatch(
     A custom ``include_resolver`` is trusted code and must avoid network access.
     Returned source identities are checked against the allowed roots before
     their streams are opened. The loader closes those streams on every path.
-    ``include_limits`` supplies an immutable reusable profile; omitted profiles
-    use the active process-wide defaults. Explicit ``max_*`` values override
+    ``include_limits`` supplies a reusable profile; omitted profiles use the
+    active process-wide defaults. Explicit ``max_*`` values override
     only their matching profile fields, and ``None`` disables that bound. Each
     top-level call gets a fresh byte/count budget. Included YAML errors retain
     source marks.
@@ -990,7 +990,7 @@ class YamlConfigLoader:
         validate_yaml_loader(yaml_loader)
         self.include_resolver = include_resolver
         self.yaml_loader = yaml_loader
-        self.include_search = validate_include_search(include_search)
+        self.include_search: IncludeSearch = validate_include_search(include_search)
         self.allow_absolute_includes = bool(allow_absolute_includes)
         self.search_paths = tuple(search_paths or ())
         self.allowed_roots = tuple(allowed_roots) if allowed_roots is not None else None
@@ -1005,27 +1005,27 @@ class YamlConfigLoader:
 
     @property
     def include_limits(self) -> IncludeLimits:
-        """Return this loader's immutable effective limits profile."""
+        """Return this loader's effective limits profile."""
         return self._include_limits
 
     @property
     def max_include_depth(self) -> int | None:
-        """Return this loader's immutable effective depth profile."""
+        """Return this loader's effective depth limit."""
         return self._include_limits.max_include_depth
 
     @property
     def max_include_files(self) -> int | None:
-        """Return this loader's immutable effective file count profile."""
+        """Return this loader's effective include count limit."""
         return self._include_limits.max_include_files
 
     @property
     def max_file_bytes(self) -> int | None:
-        """Return this loader's immutable effective file count profile."""
+        """Return this loader's effective per-file byte limit."""
         return self._include_limits.max_file_bytes
 
     @property
     def max_total_include_bytes(self) -> int | None:
-        """Return this loader's immutable effective file count profile."""
+        """Return this loader's effective total byte limit."""
         return self._include_limits.max_total_include_bytes
 
     def load_file(self, path: str | os.PathLike[str], *, loader_tag: str | UnsetType | None = UNSET) -> YamlType:

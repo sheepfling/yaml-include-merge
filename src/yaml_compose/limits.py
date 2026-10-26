@@ -1,15 +1,15 @@
 """Bounds for included files and the defaults used by new loaders.
 
-``DEFAULT_INCLUDE_LIMITS`` is the immutable, documented baseline. Applications
-can inspect the active process-wide value with ``get_default_include_limits``
-and replace it with ``set_default_include_limits``. A top-level load captures
-one limits snapshot; changing the default does not change an existing loader.
+``DEFAULT_INCLUDE_LIMITS`` is the documented baseline. The active process-wide
+value starts as a separate copy, which applications can inspect with
+``get_default_include_limits`` and replace with ``set_default_include_limits``.
+A top-level load captures one limits snapshot; changing the default does not
+change an existing loader.
 """
 
 from __future__ import annotations
 
-from copy import copy
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 
 from ._unset import UNSET, UnsetType
 
@@ -19,8 +19,10 @@ def _resolve_limit(value: int | UnsetType | None, default: int | None) -> int | 
         return default
     if value is None:
         return None
-    if isinstance(value, int):
-        return max(0, value)
+    if type(value) is int:
+        if value < 0:
+            raise ValueError("limit must be a non-negative integer or None")
+        return value
     raise ValueError("limit must be an integer or None")
 
 
@@ -61,27 +63,29 @@ class IncludeLimits:
 
     def __post_init__(self):
         """Validate fields on construction."""
-        if self.max_include_depth is not None and self.max_include_depth < 0:
-            raise ValueError("max_include_depth must be non-negative")
-        if self.max_include_files is not None and self.max_include_files < 0:
-            raise ValueError("max_include_files must be non-negative")
-        if self.max_file_bytes is not None and self.max_file_bytes < 0:
-            raise ValueError("max_file_bytes must be non-negative")
-        if self.max_total_include_bytes is not None and self.max_total_include_bytes < 0:
-            raise ValueError("max_total_include_bytes must be non-negative")
+        _resolve_limit(self.max_include_depth, None)
+        _resolve_limit(self.max_include_files, None)
+        _resolve_limit(self.max_file_bytes, None)
+        _resolve_limit(self.max_total_include_bytes, None)
+
+
+def _copy_limits(limits: IncludeLimits) -> IncludeLimits:
+    """Copy a profile into a validated snapshot."""
+    return IncludeLimits(**asdict(limits))
 
 
 DEFAULT_INCLUDE_LIMITS = IncludeLimits()
-_configured_default_limits = DEFAULT_INCLUDE_LIMITS
+_configured_default_limits = _copy_limits(DEFAULT_INCLUDE_LIMITS)
 
 
 def get_default_include_limits() -> IncludeLimits:
     """Return the active defaults for new top-level loads and loader instances.
 
-    The returned ``IncludeLimits`` is immutable. Use ``dataclasses.replace``
-    and ``set_default_include_limits`` to change selected fields.
+    The returned ``IncludeLimits`` is an independent copy. Use
+    ``dataclasses.replace`` and ``set_default_include_limits`` to change active
+    defaults.
     """
-    return copy(_configured_default_limits)
+    return _copy_limits(_configured_default_limits)
 
 
 def set_default_include_limits(limits: IncludeLimits) -> None:
@@ -97,7 +101,7 @@ def set_default_include_limits(limits: IncludeLimits) -> None:
     if type(limits) is not IncludeLimits:
         raise TypeError("limits must be an IncludeLimits instance")
     global _configured_default_limits
-    _configured_default_limits = copy(limits)
+    _configured_default_limits = _copy_limits(limits)
 
 
 def resolve_include_limits(
@@ -112,9 +116,9 @@ def resolve_include_limits(
 
     An omitted profile uses the current process-wide default. Omitted field
     overrides keep the profile value; explicit ``None`` removes that bound.
-    The returned immutable limits object is one snapshot, so later default
-    changes cannot alter an in-progress load. Invalid bounds raise
-    ``ValueError`` and an invalid profile raises ``TypeError``.
+    The returned limits profile is one snapshot, so later default changes
+    cannot alter an in-progress load. Invalid bounds raise ``ValueError`` and
+    an invalid profile raises ``TypeError``.
     """
     defaults = get_default_include_limits() if include_limits is UNSET else include_limits
     if not isinstance(defaults, IncludeLimits):

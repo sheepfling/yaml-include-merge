@@ -418,7 +418,7 @@ A few boundaries are worth knowing:
 
 For details on the grammar, operators, and implementation choices, see the [design notes](docs/design-notes.md).
 
-Use an immutable `IncludeLimits` profile to share bounds across loads. Pass it to
+Use an `IncludeLimits` profile to share bounds across loads. Pass it to
 `YamlConfigLoader` or to `load_yaml_file`, `load_yaml_dispatch`, or `load_yaml_compose`:
 
 ```python
@@ -430,8 +430,10 @@ loader = YamlConfigLoader(include_limits=profile)
 
 `DEFAULT_INCLUDE_LIMITS` exposes the package baseline. `set_default_include_limits` can
 change the process-wide defaults for new loads; each loader captures its limits when it is
-created. Existing `max_*` arguments override only their corresponding profile fields, and
-an explicit `None` leaves that bound unlimited.
+created. The process-wide defaults are kept as a separate copy of the baseline. A loader's
+`include_limits` profile can be adjusted for its later loads. Existing `max_*` arguments
+override only their corresponding profile fields, and an explicit `None` leaves that bound
+unlimited.
 
 File and byte budgets count repeated includes of the same file, including includes used
 by `!spread` or `!replace`. Budgets reset for each top-level load. The top-level input

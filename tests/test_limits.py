@@ -149,7 +149,7 @@ def test_default_depth_accepts_32_levels_and_rejects_the_next() -> None:
     value = load(32)
     for _ in range(32):
         assert isinstance(value, dict)
-        value = value["child"]
+        value = cast(dict[str, object], value)["child"]
     assert value == {"value": "done"}
     with pytest.raises(yaml.YAMLError, match=r"maximum include depth \(32\)"):
         load(33)

@@ -57,7 +57,7 @@ def assert_no_markers(value: object, seen: MutableSet[int] | None = None) -> Non
     if seen is None:
         seen = set()
     if isinstance(value, dict):
-        mapping = value
+        mapping = cast(YamlDict, value)
         if id(mapping) in seen:
             return
         seen.add(id(mapping))
@@ -65,7 +65,7 @@ def assert_no_markers(value: object, seen: MutableSet[int] | None = None) -> Non
             assert_no_markers(key, seen)
             assert_no_markers(item, seen)
     elif isinstance(value, (list, tuple)):
-        sequence = value
+        sequence = cast(list[object] | tuple[object, ...], value)
         if id(sequence) in seen:
             return
         seen.add(id(sequence))
@@ -104,7 +104,7 @@ def merge_mappings(
                         )
                     result[key] = value.source
                 elif deep and isinstance(result.get(key), dict) and isinstance(value, dict):
-                    result[key] = merge(cast(YamlDict, result[key]), value)
+                    result[key] = merge(cast(YamlDict, result[key]), cast(YamlDict, value))
                 else:
                     result[key] = value
             return result
