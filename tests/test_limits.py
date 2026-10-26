@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import FrozenInstanceError
 from io import StringIO
 from pathlib import Path, PurePosixPath
 from typing import cast
@@ -22,7 +21,7 @@ def load_profile(
         entry: str,
         config: Path,
         profile: IncludeLimits,
-        files: int | None | UnsetType = UNSET,
+        files: int | UnsetType | None = UNSET,
 ) -> object:
     if entry == "file":
         return load_yaml_file(config, include_limits=profile, max_include_files=files)
@@ -137,7 +136,7 @@ def test_default_depth_accepts_32_levels_and_rejects_the_next() -> None:
     value = load(32)
     for _ in range(32):
         assert isinstance(value, dict)
-        value = cast(dict[str, object], value)["child"]
+        value = value["child"]
     assert value == {"value": "done"}
     with pytest.raises(yaml.YAMLError, match=r"maximum include depth \(32\)"):
         load(33)

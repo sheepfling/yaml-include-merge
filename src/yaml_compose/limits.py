@@ -10,11 +10,10 @@ from __future__ import annotations
 
 from copy import copy
 from dataclasses import dataclass
-from threading import Lock
 
 from ._unset import UNSET, UnsetType
 
-def _resolve_limit(value: int | None | UnsetType, default: int | None) -> int | None:
+def _resolve_limit(value: int | UnsetType | None, default: int | None) -> int | None:
     if isinstance(value, UnsetType):
         return default
     if value is None:
@@ -93,10 +92,10 @@ def set_default_include_limits(limits: IncludeLimits) -> None:
     _configured_default_limits = copy(limits)
 
 def resolve_include_limits(
-        max_include_depth: int | None | UnsetType,
-        max_include_files: int | None | UnsetType,
-        max_file_bytes: int | None | UnsetType,
-        max_total_include_bytes: int | None | UnsetType,
+        max_include_depth: int | UnsetType | None,
+        max_include_files: int | UnsetType | None,
+        max_file_bytes: int | UnsetType | None,
+        max_total_include_bytes: int | UnsetType | None,
         *,
         include_limits: IncludeLimits | UnsetType = UNSET,
 ) -> IncludeLimits:

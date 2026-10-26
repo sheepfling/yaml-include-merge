@@ -104,7 +104,7 @@ def merge_mappings(
                         )
                     result[key] = value.source
                 elif deep and isinstance(result.get(key), dict) and isinstance(value, dict):
-                    result[key] = merge(cast(YamlDict, result[key]), cast(YamlDict, value))
+                    result[key] = merge(cast(YamlDict, result[key]), value)
                 else:
                     result[key] = value
             return result

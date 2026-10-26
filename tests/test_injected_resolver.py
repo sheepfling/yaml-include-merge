@@ -66,10 +66,10 @@ class TestInjectedResolver:
         self,
         files: Mapping[str, str | bytes],
         *,
-        max_include_depth: int | None | UnsetType = UNSET,
-        max_include_files: int | None | UnsetType = UNSET,
-        max_file_bytes: int | None | UnsetType = UNSET,
-        max_total_include_bytes: int | None | UnsetType = UNSET,
+        max_include_depth: int | UnsetType | None = UNSET,
+        max_include_files: int | UnsetType | None = UNSET,
+        max_file_bytes: int | UnsetType | None = UNSET,
+        max_total_include_bytes: int | UnsetType | None = UNSET,
     ) -> YamlConfigLoader:
         return YamlConfigLoader(
             include_resolver=MemoryIncludeResolver(self.root, files),

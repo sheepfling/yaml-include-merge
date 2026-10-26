@@ -62,7 +62,7 @@ class UniqueKeySafeLoader(SafeLoader):
                     key_node.start_mark,
                 )
             seen.add(key)
-        return cast(dict[Hashable, object], super().construct_mapping(node, deep=deep))
+        return super().construct_mapping(node, deep=deep)
 
 
 def validate_yaml_loader(yaml_loader: object) -> None:

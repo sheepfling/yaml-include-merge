@@ -14,7 +14,6 @@ import yaml
 
 from scripts import check_pyright, ci
 
-
 def test_hosted_matrix_covers_declared_versions_and_runs_python_checks(repo_root: Path) -> None:
     metadata = (repo_root / "pyproject.toml").read_text(encoding="utf-8")
     versions = re.findall(r'"Programming Language :: Python :: (3\.\d+)"', metadata)
@@ -34,7 +33,6 @@ def test_hosted_matrix_covers_declared_versions_and_runs_python_checks(repo_root
     assert 'python -m pip install -e ".[dev]"' in quality_commands
     assert "python -m scripts.ci --quality-only" in quality_commands
 
-
 @pytest.mark.parametrize(
     ("arguments", "has_python_checks", "has_tests", "has_repository_checks"),
     [
@@ -46,12 +44,12 @@ def test_hosted_matrix_covers_declared_versions_and_runs_python_checks(repo_root
     ],
 )
 def test_coordinator_modes_run_full_suites_with_the_active_interpreter(
-    monkeypatch: pytest.MonkeyPatch,
-    repo_root: Path,
-    arguments: list[str] | None,
-    has_python_checks: bool,
-    has_tests: bool,
-    has_repository_checks: bool,
+        monkeypatch: pytest.MonkeyPatch,
+        repo_root: Path,
+        arguments: list[str] | None,
+        has_python_checks: bool,
+        has_tests: bool,
+        has_repository_checks: bool,
 ) -> None:
     monkeypatch.setattr(sys, "argv", ["ci"])
     commands: list[tuple[str, ...]] = []
@@ -61,7 +59,7 @@ def test_coordinator_modes_run_full_suites_with_the_active_interpreter(
         return "rumdl"
 
     def run(
-        command: Sequence[str], *, cwd: Path, env: dict[str, str], check: bool
+            command: Sequence[str], *, cwd: Path, env: dict[str, str], check: bool
     ) -> subprocess.CompletedProcess[str]:
         assert cwd == repo_root
         assert Path(env["TEMP"]).is_relative_to(repo_root / "build" / "local-checks")
@@ -92,12 +90,11 @@ def test_coordinator_modes_run_full_suites_with_the_active_interpreter(
             command[1:5] == ("-m", "pre_commit", "run", "--all-files") for command in commands
         )
 
-
 def test_coordinator_stops_and_propagates_a_failed_check(monkeypatch: pytest.MonkeyPatch) -> None:
     commands: list[Sequence[str]] = []
 
     def run(
-        command: Sequence[str], *, cwd: Path, env: dict[str, str], check: bool
+            command: Sequence[str], *, cwd: Path, env: dict[str, str], check: bool
     ) -> subprocess.CompletedProcess[str]:
         commands.append(command)
         return subprocess.CompletedProcess(command, 42)
@@ -105,7 +102,6 @@ def test_coordinator_stops_and_propagates_a_failed_check(monkeypatch: pytest.Mon
     monkeypatch.setattr("scripts.ci.subprocess.run", run)
     assert ci.main(["--python-only"]) == 42
     assert len(commands) == 1
-
 
 def test_type_checks_target_the_active_interpreter(monkeypatch: pytest.MonkeyPatch) -> None:
     commands: list[Sequence[str]] = []
