@@ -81,6 +81,12 @@ class _StrippedLoaderDirective(NamedTuple):
     text: str
     loader_tag: str | None
 
+
+class _StreamIdentity(NamedTuple):
+    path: Path | None
+    display_name: str
+
+
 @dataclass(slots=True)
 class _IncludeBudget:
     max_include_depth: int | None
@@ -100,17 +106,16 @@ def _read_text_input(stream: TextIO) -> object:
     """Keep the runtime result opaque until its text type has been checked."""
     return stream.read()
 
-# TODO replace this with a semantic NamedTuple
-def _stream_identity(stream: TextIO) -> tuple[Path | None, str]:
+def _stream_identity(stream: TextIO) -> _StreamIdentity:
     """Read a stream name once as a normalized file path or a display label."""
     name = getattr(stream, "name", None)
     if name is None:
-        return None, "<yaml stream>"
+        return _StreamIdentity(None, "<yaml stream>")
     value = cast(str | bytes, os.fspath(name))
     if not isinstance(value, str) or (value and value.startswith("<") and value.endswith(">")):
-        return None, "<yaml stream>"
+        return _StreamIdentity(None, "<yaml stream>")
     path = Path(value).resolve(strict=True)
-    return path, str(path)
+    return _StreamIdentity(path, str(path))
 
 def _source_ref(
         source_path: Path | None,
@@ -739,7 +744,9 @@ def load_yaml_dispatch(
     if source_path is not None:
         normalized_source_path = Path(source_path).resolve(strict=True)
     elif source is None:
-        normalized_source_path, fallback_source_name = _stream_identity(stream)
+        stream_identity = _stream_identity(stream)
+        normalized_source_path = stream_identity.path
+        fallback_source_name = stream_identity.display_name
     else:
         normalized_source_path = None
     source_ref = _source_ref(normalized_source_path, source)
