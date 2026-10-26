@@ -37,7 +37,16 @@ jobs:
       - name: Smoke-test the installed wheel
         run: |
           python -m pip install --no-deps --force-reinstall dist/*.whl
-          python -I -c 'from io import StringIO; from yaml_compose import load_yaml_compose; assert load_yaml_compose(StringIO("items: [before, !spread [[one, two]], after]\n")) == {"items": ["before", "one", "two", "after"]}'
+          python -I - <<'PY'
+          from io import StringIO
+          from yaml_compose import load_yaml_compose
+
+          result = load_yaml_compose(
+              StringIO("items: [before, !spread [[one, two]], after]\n"),
+              search_paths=["."],
+          )
+          assert result == {"items": ["before", "one", "two", "after"]}
+          PY
       - uses: actions/upload-artifact@v4
         with:
           name: python-distributions
