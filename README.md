@@ -87,9 +87,9 @@ YAML files can still be loaded without modification.
 ## Include JSON-family and TOML sources
 
 `!include` selects a parser from the resolved source suffix: `.json`, `.jsonc`,
-`.json5`, or `.toml`. Unknown suffixes keep the existing YAML behavior. YAML
-remains the composition layer, so included mappings and lists use the same merge,
-replace, delete, and spread operations.
+`.json5`, `.jsonl`, `.ndjson`, or `.toml`. Unknown suffixes keep the existing
+YAML behavior. YAML remains the composition layer, so included mappings use the
+same merge, replace, delete, and spread operations.
 
 `.json` is strict JSON. `.jsonc` allows `//` and `/* ... */` comments but keeps
 strict JSON rules, including rejection of duplicate keys, trailing commas, and
@@ -101,8 +101,12 @@ byte-order mark (BOM); a BOM is a marked include parse error.
 
 TOML dates and times stay as Python `date`, `time`, and `datetime` values.
 Includes in every format use the same root checks, cycle tracking, and byte and
-depth limits. The [format guide](docs/formats.md) describes the parser behavior,
-optional dependency, and adapter API.
+depth limits. JSONL and NDJSON includes produce ordered Python lists of records;
+YAML can spread those lists into sequences, but they are not mapping merge
+sources. Loading buffers the bounded source bytes and materializes all records before returning. NDJSON blank
+lines are errors by default and can be ignored by replacing the loader's NDJSON
+adapter. The [format guide](docs/formats.md) describes parser behavior, record
+semantics, the optional dependency, and adapter API.
 Python 3.10 uses the declared `tomli` dependency; Python 3.11 and later use the
 standard-library TOML parser.
 
@@ -422,7 +426,8 @@ tags.
 
 By default, parsing uses PyYAML's `SafeLoader`.
 
-Included `.json` and `.toml` files are parsed by the built-in strict JSON and TOML adapters.
+Included `.json`, `.jsonl`, `.ndjson`, and `.toml` files use the built-in strict JSON,
+record JSON, and TOML adapters.
 YAML still owns composition: merge, delete, replace, and spread operators are expressed in
 the including YAML document. You can register a parser for another included-file suffix on a
 `FormatRegistry` and pass that registry to `YamlConfigLoader` or any loading function. See

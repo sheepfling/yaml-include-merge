@@ -11,12 +11,14 @@ import importlib
 import json
 import math
 import re
+from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import ClassVar, NoReturn, Protocol, cast
+from typing import ClassVar, Literal, NoReturn, Protocol, cast
 
 from .resolver import IncludeSource
 
 _FORMAT_ID = re.compile(r"[a-z][a-z0-9_-]*\Z")
+FormatCapability = Literal["document", "records"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,6 +27,7 @@ class FormatDescriptor:
 
     format_id: str
     suffixes: tuple[str, ...]
+    capability: FormatCapability = "document"
 
     def __post_init__(self) -> None:
         """Validate and normalize the format's suffix aliases."""
@@ -39,6 +42,8 @@ class FormatDescriptor:
             raise ValueError("format suffixes must be non-empty filename extensions beginning with '.'")
         if len(set(suffixes)) != len(suffixes):
             raise ValueError("format suffixes must be unique")
+        if self.capability not in ("document", "records"):
+            raise ValueError("format capability must be 'document' or 'records'")
         object.__setattr__(self, "suffixes", suffixes)
 
 
@@ -65,6 +70,20 @@ class FormatAdapter(Protocol):
         """Return the format's native Python value without coercion."""
 
 
+class RecordFormatAdapter(Protocol):
+    """Parse a bounded record source into an iterator of native values.
+
+    The host consumes and closes this iterator before the YAML include finishes.
+    Adapters receive already-read bytes, never a source opener or live stream.
+    """
+
+    descriptor: ClassVar[FormatDescriptor]
+
+    def iter_records(self, source: FormatInput, /) -> Iterator[object]:
+        """Yield ordered records from one already-bounded source."""
+        ...
+
+
 class FormatParseError(ValueError):
     """Expected invalid-input failure raised by a format adapter."""
 
@@ -80,7 +99,7 @@ class UnknownFormatError(LookupError):
 @dataclass(frozen=True, slots=True)
 class _FormatRegistration:
     descriptor: FormatDescriptor
-    adapter: FormatAdapter | None
+    adapter: FormatAdapter | RecordFormatAdapter | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,7 +111,7 @@ class FormatSelection:
     """
 
     descriptor: FormatDescriptor
-    adapter: FormatAdapter | None
+    adapter: FormatAdapter | RecordFormatAdapter | None
 
 
 class _TomlParser(Protocol):
@@ -277,6 +296,67 @@ class _Json5Adapter:
             raise FormatParseError(str(exc)) from exc
 
 
+def _iter_json_records(
+    source: FormatInput,
+    *,
+    format_name: str,
+    ignore_blank_lines: bool,
+) -> Iterator[object]:
+    """Yield strict JSON values split only on LF from bounded UTF-8 bytes."""
+    try:
+        text = source.data.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise FormatParseError(f"include source {source.source_name} is not UTF-8 text") from exc
+    if text.startswith("\ufeff"):
+        raise FormatParseError("UTF-8 byte-order mark (BOM) is not supported")
+    if not text:
+        return
+
+    records = text.split("\n")
+    if text.endswith("\n"):
+        records.pop()
+    for line_number, record in enumerate(records, start=1):
+        if not record.strip(" \t\r"):
+            if ignore_blank_lines:
+                continue
+            raise FormatParseError(f"{format_name} record line {line_number}: blank records are not allowed")
+        try:
+            value = _parse_strict_json(record)
+        except json.JSONDecodeError as exc:
+            raise FormatParseError(f"{format_name} record line {line_number}, column {exc.colno}: {exc.msg}") from exc
+        except (RecursionError, ValueError) as exc:
+            raise FormatParseError(f"{format_name} record line {line_number}: {exc}") from exc
+        yield value
+
+
+class _JsonLinesAdapter:
+    descriptor: ClassVar[FormatDescriptor] = FormatDescriptor("jsonl", (".jsonl",), capability="records")
+
+    def iter_records(self, source: FormatInput, /) -> Iterator[object]:
+        return _iter_json_records(source, format_name="JSONL", ignore_blank_lines=False)
+
+
+@dataclass(frozen=True, slots=True)
+class NdjsonAdapter:
+    """NDJSON parser; blank-line skipping is an explicit opt-in."""
+
+    ignore_blank_lines: bool = False
+    descriptor: ClassVar[FormatDescriptor] = FormatDescriptor("ndjson", (".ndjson",), capability="records")
+
+    def __post_init__(self) -> None:
+        """Reject truthy non-boolean policies that could obscure configuration."""
+        if type(self.ignore_blank_lines) is not bool:
+            raise TypeError("ignore_blank_lines must be a bool")
+
+    def iter_records(self, source: FormatInput, /) -> Iterator[object]:
+        """Yield strict JSON records using this adapter's blank-line policy."""
+        return _iter_json_records(
+            source,
+            format_name="NDJSON",
+            ignore_blank_lines=self.ignore_blank_lines,
+        )
+
+
 class _TomlAdapter:
     descriptor: ClassVar[FormatDescriptor] = FormatDescriptor("toml", (".toml",))
 
@@ -297,10 +377,10 @@ class FormatRegistry:
     """Mutable registry builder; loaders capture an independent frozen snapshot.
 
     A new registry contains the private YAML composition entry and the built-in
-    strict JSON, JSONC, JSON5, and TOML adapters. JSON5 imports its optional parser
-    only when selected. Unknown suffixes continue to use YAML. Adapter objects must
-    be stateless; snapshots copy lookup maps, retain immutable descriptors, and
-    share adapters. Explicit overrides may replace the same format ID only.
+    strict JSON, JSONC, JSON5, JSONL, NDJSON, and TOML adapters. JSON5 imports its
+    optional parser only when selected. Unknown suffixes continue to use YAML.
+    Adapter objects must be stateless; snapshots copy lookup maps, retain immutable
+    descriptors, and share adapters. Explicit overrides may replace the same format ID only.
     """
 
     def __init__(self) -> None:
@@ -312,6 +392,8 @@ class FormatRegistry:
         self.register(_StrictJsonAdapter())
         self.register(_JsoncAdapter())
         self.register(_Json5Adapter())
+        self.register(_JsonLinesAdapter())
+        self.register(NdjsonAdapter())
         self.register(_TomlAdapter())
 
     def _install_yaml(self) -> None:
@@ -320,14 +402,19 @@ class FormatRegistry:
         for suffix in descriptor.suffixes:
             self._suffixes[suffix] = descriptor.format_id
 
-    def register(self, adapter: FormatAdapter, *, replace: bool = False) -> None:
+    def register(self, adapter: FormatAdapter | RecordFormatAdapter, *, replace: bool = False) -> None:
         """Register an adapter atomically; suffix collisions require same-ID replacement."""
         if self._frozen:
             raise TypeError("a loader's format registry snapshot is read-only")
         descriptor = getattr(adapter, "descriptor", None)
         parse = getattr(adapter, "parse", None)
-        if not isinstance(descriptor, FormatDescriptor) or not callable(parse):
-            raise TypeError("adapter must provide a FormatDescriptor and parse(source) method")
+        iter_records = getattr(adapter, "iter_records", None)
+        if not isinstance(descriptor, FormatDescriptor):
+            raise TypeError("adapter must provide a FormatDescriptor")
+        if descriptor.capability == "document" and not callable(parse):
+            raise TypeError("document adapters must provide a parse(source) method")
+        if descriptor.capability == "records" and not callable(iter_records):
+            raise TypeError("record adapters must provide an iter_records(source) method")
         format_id = descriptor.format_id
         if format_id == "yaml":
             raise ValueError("the built-in YAML composition entry cannot be replaced")
@@ -408,11 +495,14 @@ class FormatRegistry:
 
 __all__ = (
     "FormatAdapter",
+    "FormatCapability",
     "FormatDependencyError",
     "FormatDescriptor",
     "FormatInput",
     "FormatParseError",
     "FormatRegistry",
     "FormatSelection",
+    "NdjsonAdapter",
+    "RecordFormatAdapter",
     "UnknownFormatError",
 )

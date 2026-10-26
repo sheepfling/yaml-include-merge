@@ -1,0 +1,7 @@
+%LOADER YamlCompose
+---
+records: !include ./include_records/events.jsonl
+steps:
+  - prepare
+  - !spread [!include ./include_records/checks.ndjson]
+  - deploy

@@ -5,12 +5,15 @@ from ._search import IncludeSearch
 from ._unset import UNSET, UnsetType
 from .formats import (
     FormatAdapter,
+    FormatCapability,
     FormatDependencyError,
     FormatDescriptor,
     FormatInput,
     FormatParseError,
     FormatRegistry,
     FormatSelection,
+    NdjsonAdapter,
+    RecordFormatAdapter,
     UnknownFormatError,
 )
 from .limits import (
@@ -68,6 +71,7 @@ __all__ = (
     "FileSource",
     "FileSystemIncludeResolver",
     "FormatAdapter",
+    "FormatCapability",
     "FormatDependencyError",
     "FormatDescriptor",
     "FormatInput",
@@ -84,6 +88,8 @@ __all__ = (
     "MemoryIncludeResolver",
     "MemoryRoot",
     "MemorySource",
+    "NdjsonAdapter",
+    "RecordFormatAdapter",
     "ResolvedInclude",
     "UnknownFormatError",
     "UnsetType",

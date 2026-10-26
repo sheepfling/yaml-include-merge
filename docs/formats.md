@@ -5,9 +5,10 @@
 is parsed into its native Python value; the package does not interpret YAML tags inside it.
 
 The default registry selects YAML for `.yaml` and `.yml`, strict JSON for `.json`, JSONC for
-`.jsonc`, JSON5 for `.json5`, and TOML for `.toml`. JSONC masks comments and then uses the
-same strict JSON parser as `.json`; duplicate keys, trailing commas, and non-finite values
-remain errors. Comment masking preserves line breaks and token boundaries. JSON5 is optional:
+`.jsonc`, JSON5 for `.json5`, JSON Lines for `.jsonl`, NDJSON for `.ndjson`, and TOML for
+`.toml`. JSONC masks comments and then uses the same strict JSON parser as `.json`; duplicate
+keys, trailing commas, and non-finite values remain errors. Comment masking preserves line
+breaks and token boundaries. JSON5 is optional:
 install `yaml-compose[json5]` to enable it. Its parser loads lazily only when a `.json5` source
 is selected. TOML uses `tomllib` where available and the package's existing `tomli`
 dependency on Python 3.10. Unknown suffixes continue through YAML for compatibility.
@@ -26,6 +27,44 @@ has no runtime dependencies; its maintainer warns that it is substantially slowe
 standard JSON parser and deeply nested input may reach Python's recursion limit. See the
 [json5 0.17.3 package page](https://pypi.org/project/json5/0.17.3/) and its
 [maintainer documentation](https://github.com/dpranke/pyjson5/blob/main/README.md).
+
+## JSON Lines and NDJSON records
+
+Both record formats require UTF-8 without a BOM and parse one strict JSON value per LF-delimited
+record. Objects, arrays, strings, numbers, booleans, and `null` stay as native Python values in
+order. CRLF is accepted. The parser splits only on LF, so Unicode line separators inside JSON
+strings are ordinary characters and a bare CR never acts as a record delimiter. Errors identify
+the physical record line and include a parser column when one is available. Duplicate keys and
+non-finite numbers are rejected with the same strict JSON rules used by `.json`.
+
+An empty source produces `[]` as this package's zero-record result. A final LF does not create an
+extra empty record. JSON Lines permits a missing final line terminator. NDJSON serialization
+requires a final LF; this reader accepts a final record without one as an interoperability
+extension. The [JSON Lines format documentation](https://jsonlines.org/) and the
+[NDJSON specification](https://github.com/ndjson/ndjson-spec) define these format conventions.
+
+JSON Lines rejects blank and whitespace-only records. NDJSON also rejects them by default, but
+its specification permits parsers to ignore empty lines and recommends configurable behavior.
+Opt in for a loader by replacing the built-in NDJSON adapter in that loader's registry:
+
+```python
+from yaml_compose import FormatRegistry, NdjsonAdapter, YamlConfigLoader
+
+formats = FormatRegistry()
+formats.register(NdjsonAdapter(ignore_blank_lines=True), replace=True)
+loader = YamlConfigLoader(format_registry=formats)
+```
+
+The setting is immutable and local to the registry snapshot. When enabled, empty and
+whitespace-only NDJSON records are skipped; JSON Lines remains strict.
+
+The public `RecordFormatAdapter` protocol marks this capability separately from single-document
+parsers. It exposes `iter_records(FormatInput)`, where the input already contains bounded bytes
+and inert source identity. The include host closes the source stream before invoking the adapter,
+then eagerly consumes and closes the iterator while the YAML include context is active. Includes
+therefore return a buffered list: a late record error fails the whole include and no partial list
+escapes. This is not constant-memory file streaming. YAML `!spread` can insert records into a
+sequence. A record list is not a mapping, so it cannot be used as a `<<` or `<<<` merge source.
 
 ## Register a parser
 
@@ -78,6 +117,9 @@ YAML include mark and preserves the exception chain.
 
 - An adapter implements the `FormatAdapter` protocol: a class-level `FormatDescriptor` and
   `parse(FormatInput) -> object`.
+- A record adapter implements `RecordFormatAdapter`, and its descriptor sets
+  `capability="records"`; it supplies `iter_records(FormatInput) -> Iterator[object]` instead
+  of `parse`. The registry checks that the declared capability has the matching method.
 - The host resolves and confines sources, checks cycles and include budgets, reads bounded
   bytes, and closes the stream before calling an adapter. `FormatInput` exposes those bytes,
   a canonical source identity, and a display name. It does not expose a file opener.
@@ -106,6 +148,5 @@ YAML include mark and preserves the exception chain.
   default result type; validate custom-loader results before narrowing them in application
   code.
 
-This phase covers complete single-document parsers. It does not define record-stream or
-serializer APIs. Applications that need a JSON Lines-like format should wait for that
-separate capability instead of treating a stream as an ordinary single document.
+Serializers and live file-stream APIs are not part of this adapter boundary. Record adapters
+iterate over already-owned bounded bytes; include loading still returns a complete Python list.

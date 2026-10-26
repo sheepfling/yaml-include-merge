@@ -15,6 +15,9 @@ links the runnable example files to the tests that check their results. Run
   [TOML values](include_formats/database.toml), and a JSON list spread. The
   [worked guide](../docs/examples.md#include-json-and-toml-sources) shows the
   exact resolved result and Python date-time types.
+- [include_records.yaml](include_records.yaml) includes a JSON Lines list and
+  spreads NDJSON records; the [worked guide](../docs/examples.md#json-lines-and-ndjson-records)
+  documents buffered record semantics.
 - [shallow_merge.yaml](shallow_merge.yaml) replaces a nested mapping with `<<`.
 - [deep_merge.yaml](deep_merge.yaml) preserves nested defaults with `<<<`.
 - [merge_precedence.yaml](merge_precedence.yaml) shows earlier source priority
@@ -68,6 +71,7 @@ From the repository root after installing the package:
 ```shell
 python examples/load_config.py
 python examples/include_formats.py
+python examples/include_records.py
 python examples/include_search.py
 python examples/in_memory_config.py
 python examples/custom_loader.py

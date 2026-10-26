@@ -38,10 +38,12 @@ from ._streams import read_bounded
 from ._unset import UNSET, UnsetType
 from ._yaml_loader import configured_include_loader, ordinary_loader, validate_yaml_loader
 from .formats import (
+    FormatAdapter,
     FormatDependencyError,
     FormatInput,
     FormatParseError,
     FormatRegistry,
+    RecordFormatAdapter,
     UnknownFormatError,
 )
 from .limits import DEFAULT_INCLUDE_LIMITS, IncludeLimits, resolve_include_limits
@@ -494,8 +496,16 @@ class IncludeLoader(SafeLoader):
             self.budget.include_bytes += len(content)
             if adapter is not None:
                 format_input = FormatInput(include_source, source_label, content)
+                if descriptor.capability == "records":
+                    return self._collect_records(
+                        node,
+                        descriptor.format_id,
+                        source_label,
+                        cast(RecordFormatAdapter, adapter),
+                        format_input,
+                    )
                 try:
-                    return adapter.parse(format_input)
+                    return cast(FormatAdapter, adapter).parse(format_input)
                 except FormatDependencyError as exc:
                     _include_error(
                         node,
@@ -550,6 +560,50 @@ class IncludeLoader(SafeLoader):
                 f"cannot read include source {_include_source_label(include_source)}: {exc}",
                 exc,
             )
+
+    @staticmethod
+    def _collect_records(
+        node: Node,
+        format_id: str,
+        source_label: str,
+        adapter: RecordFormatAdapter,
+        format_input: FormatInput,
+    ) -> list[object]:
+        """Eagerly consume and close one bounded record iterator under include context."""
+        try:
+            iterator = iter(adapter.iter_records(format_input))
+        except Exception as exc:
+            _include_error(
+                node,
+                f"record adapter for {format_id.upper()} failed for include source {source_label}: {exc}",
+                exc,
+            )
+
+        records: list[object] = []
+        failure: Exception | None = None
+        try:
+            for record in iterator:
+                records.append(record)
+        except Exception as exc:
+            failure = exc
+        finally:
+            close = getattr(iterator, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception as exc:
+                    if failure is None:
+                        failure = exc
+
+        if failure is not None:
+            if isinstance(failure, FormatDependencyError):
+                message = f"cannot parse {format_id.upper()} include source {source_label}: {failure}"
+            elif isinstance(failure, FormatParseError):
+                message = f"invalid {format_id.upper()} include source {source_label}: {failure}"
+            else:
+                message = f"record adapter for {format_id.upper()} failed for include source {source_label}: {failure}"
+            _include_error(node, message, failure)
+        return records
 
     def construct_mapping(self, node: MappingNode, deep: bool = False) -> YamlDict:
         """Apply one shallow ``<<`` or deep ``<<<`` mapping underlay.

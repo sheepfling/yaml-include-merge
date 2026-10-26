@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 from typing import ClassVar, TextIO
 
@@ -9,9 +10,11 @@ from typing_extensions import assert_type
 from yaml import SafeLoader
 
 from yaml_compose import (
+    FormatCapability,
     FormatDescriptor,
     FormatInput,
     FormatRegistry,
+    RecordFormatAdapter,
     YamlConfigLoader,
     YamlType,
     load_yaml_compose,
@@ -29,6 +32,15 @@ class PluginAdapter:
 
     def parse(self, source: FormatInput, /) -> object:
         return source.data.decode("utf-8")
+
+
+class PluginRecordAdapter:
+    descriptor: ClassVar[FormatDescriptor] = FormatDescriptor(
+        "record-plugin", (".record-plugin",), capability="records"
+    )
+
+    def iter_records(self, source: FormatInput, /) -> Iterator[object]:
+        yield source.data.decode("utf-8")
 
 
 def check_default_result_types(stream: TextIO, path: Path) -> None:
@@ -86,3 +98,10 @@ def check_injected_result_types(stream: TextIO, path: Path) -> None:
     assert_type(domain_loader.load_file(path), object)
     explicit_safe_loader = YamlConfigLoader(yaml_loader=SafeLoader)
     assert_type(explicit_safe_loader.load_file(path), object)
+
+
+def check_record_adapter_contract() -> None:
+    formats = FormatRegistry()
+    adapter: RecordFormatAdapter = PluginRecordAdapter()
+    formats.register(adapter)
+    assert_type(formats.get_format("record-plugin").capability, FormatCapability)

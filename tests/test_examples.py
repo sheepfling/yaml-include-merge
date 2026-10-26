@@ -117,6 +117,13 @@ def test_json_and_toml_example_has_the_documented_result() -> None:
     }
 
 
+def test_record_formats_example_has_the_documented_result(examples_path: Path) -> None:
+    assert load_yaml_file(examples_path / "include_records.yaml") == {
+        "records": [{"event": "started", "service": "api"}, None],
+        "steps": ["prepare", "lint", {"suite": "unit", "passed": True}, "deploy"],
+    }
+
+
 def test_custom_loader_example_uses_its_tag_inside_a_nested_include() -> None:
     assert load_custom_loader_example() == {"profile": {"name": "ALICE"}}
 

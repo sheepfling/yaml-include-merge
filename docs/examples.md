@@ -171,6 +171,42 @@ numbers just like `.json`. JSON5 duplicate keys are rejected; its native
 `NaN`/infinity values remain Python floats. See the
 [format guide](formats.md) for parser and error details.
 
+### JSON Lines and NDJSON records
+
+The runnable [`include_records.yaml`](../examples/include_records.yaml) example
+includes a JSON Lines file as a list and spreads records from an NDJSON file:
+
+```yaml
+%LOADER YamlCompose
+---
+records: !include ./include_records/events.jsonl
+steps:
+  - prepare
+  - !spread [!include ./include_records/checks.ndjson]
+  - deploy
+```
+
+Each file produces an ordered Python list. The example resolves to:
+
+```python
+{
+    "records": [{"event": "started", "service": "api"}, None],
+    "steps": ["prepare", "lint", {"suite": "unit", "passed": True}, "deploy"],
+}
+```
+
+Records can be any strict JSON root value. Duplicate keys, non-finite numbers,
+invalid UTF-8, BOMs, and blank records fail with an include error. Both formats
+accept CRLF and a missing final newline; the latter is an interoperability
+extension for NDJSON, whose serialization specification requires a trailing LF.
+An empty file returns `[]`. JSONL always rejects blank lines; NDJSON rejects them
+by default but can be configured to skip them with `NdjsonAdapter`. The include
+loader reads bounded bytes and materializes the list before returning, so this is
+not constant-memory streaming. YAML can spread the list into a sequence, but a
+list of records is not a mapping merge source. Exact output is asserted by
+[`tests/test_examples.py`](../tests/test_examples.py); parser and failure cases
+are covered by [`tests/test_record_formats.py`](../tests/test_record_formats.py).
+
 ## Three filesystem layers
 
 These files live in `examples/`. The first file provides defaults:
