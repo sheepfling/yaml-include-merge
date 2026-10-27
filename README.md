@@ -141,9 +141,10 @@ are disabled. `!include` rejects `.csv` sources with a message directing callers
 and the [format guide](docs/formats.md#csv-rows-and-header-records) for details.
 
 `!include-text` returns strictly decoded UTF-8 while preserving whitespace and line endings.
-`!include-raw` returns the exact source bytes, including non-UTF-8 and NUL bytes. Both use the
-same resolver and include budgets. Raw byte values require explicit conversion before JSON
-serialization.
+For a normal local binary file, just write `payload: !include-raw ./assets/payload.bin` in YAML;
+no resolver setup is needed. It returns the exact source bytes, including non-UTF-8 and NUL bytes.
+Both tags use the same path confinement and include budgets. Raw byte values require explicit
+conversion before JSON serialization.
 
 ## Composition that reads like YAML
 

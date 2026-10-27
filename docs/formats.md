@@ -189,17 +189,21 @@ text paths and explicitly opts into `.conf`. Exact results and failure cases are
 
 Use `!include-raw` when a source must remain exact bytes:
 
+For a normal local file, write its path directly; no custom resolver or loader setup is needed:
+
 ```yaml
 %LOADER YamlCompose
 ---
 payload: !include-raw ./assets/payload.bin
 ```
 
-It returns the resolver's original bytes without decoding, parsing, or executing them. NUL and
-non-UTF-8 bytes are preserved. Path resolution, root confinement, stream ownership, include
-depth/count, and byte limits are the same as for `!include` and `!include-text`. Custom resolvers
-must provide a binary stream; a text stream is rejected rather than encoded. Python `bytes` values
-are not JSON-serializable without an explicit application conversion.
+The default filesystem resolver opens the source in binary mode. The tag returns the original
+bytes without decoding, parsing, or executing them; NUL and non-UTF-8 bytes are preserved. Path
+resolution, root confinement, stream ownership, include depth/count, and byte limits are the same
+as for `!include` and `!include-text`. If you provide a custom resolver, it must return a binary
+stream; a text stream is rejected rather than encoded. Python `bytes` values are not
+JSON-serializable without an explicit application conversion. This default filesystem path is
+covered by [`test_include_raw_preserves_every_byte_and_empty_sources`](../tests/test_include_raw.py).
 
 ## Register a parser
 
