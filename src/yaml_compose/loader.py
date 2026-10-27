@@ -57,6 +57,7 @@ from .resolver import (
     IncludeSource,
     MemoryRoot,
     MemorySource,
+    ResolvedInclude,
     validate_include_name,
 )
 from .tags import (
@@ -64,6 +65,7 @@ from .tags import (
     DEEP_MERGE_KEY,
     DELETE_TAG,
     INCLUDE_TAG,
+    INCLUDE_TEXT_TAG,
     LOADER_DIRECTIVE,
     MERGE_KEY,
     MERGE_TAG,
@@ -282,9 +284,15 @@ def _construct_object(loader: SafeLoader, node: Node, *, deep: bool = True) -> o
     return construct(node, deep)
 
 
-def _include_error(node: Node, message: str, cause: Exception | None = None) -> NoReturn:
+def _include_error(
+    node: Node,
+    message: str,
+    cause: Exception | None = None,
+    *,
+    tag: str = INCLUDE_TAG,
+) -> NoReturn:
     error = ConstructorError(
-        f"while resolving {INCLUDE_TAG}",
+        f"while resolving {tag}",
         None,
         message,
         node.start_mark,
@@ -339,6 +347,10 @@ class IncludeLoader(SafeLoader):
     @staticmethod
     def _construct_include(loader: IncludeLoader, node: Node) -> object:
         return loader._include(node)
+
+    @staticmethod
+    def _construct_include_text(loader: IncludeLoader, node: Node) -> str:
+        return loader._include_text(node)
 
     @staticmethod
     def _construct_delete(loader: IncludeLoader, node: Node) -> object:
@@ -406,18 +418,19 @@ class IncludeLoader(SafeLoader):
                 result.append(value)
         return result
 
-    def _include(self, node: Node) -> object:
+    def _resolve_include_source(self, node: Node, *, tag: str) -> tuple[ResolvedInclude, IncludeSource, str]:
+        """Resolve and validate one include source under the current loader context."""
         if not isinstance(node, ScalarNode):
-            _include_error(node, f"{INCLUDE_TAG} expects a scalar path")
+            _include_error(node, f"{tag} expects a scalar path", tag=tag)
         name = self.construct_scalar(node)
         if not name:
-            _include_error(node, f"{INCLUDE_TAG} expects a non-empty path")
+            _include_error(node, f"{tag} expects a non-empty path", tag=tag)
         try:
             validate_include_name(name, allow_absolute=self.allow_absolute_includes)
         except ValueError as exc:
-            _include_error(node, str(exc), exc)
+            _include_error(node, str(exc), exc, tag=tag)
         if not self.allowed_roots:
-            _include_error(node, f"{INCLUDE_TAG} requires at least one allowed root")
+            _include_error(node, f"{tag} requires at least one allowed root", tag=tag)
         try:
             resolved = self.include_resolver.resolve(
                 IncludeRequest(
@@ -429,41 +442,44 @@ class IncludeLoader(SafeLoader):
                 )
             )
         except (OSError, ValueError) as exc:
-            _include_error(node, str(exc), exc)
+            _include_error(node, str(exc), exc, tag=tag)
 
         try:
             include_source = _canonical_source(resolved.source)
         except (OSError, RuntimeError, ValueError, TypeError) as exc:
-            _include_error(node, f"resolver returned an invalid source: {exc}", exc)
+            _include_error(node, f"resolver returned an invalid source: {exc}", exc, tag=tag)
         source_label = _include_source_label(include_source)
         if not _source_is_within_roots(include_source, self.allowed_roots):
             _include_error(
                 node,
                 f"include source {source_label!r} is outside the allowed roots",
+                tag=tag,
             )
         if include_source in self.load_stack:
             _include_error(
                 node,
                 "include cycle detected: "
                 + " -> ".join(_include_source_label(item) for item in (*self.load_stack, include_source)),
+                tag=tag,
             )
         if self.budget.max_include_depth is not None and self.budget.current_depth >= self.budget.max_include_depth:
             _include_error(
                 node,
                 f"maximum include depth ({self.budget.max_include_depth}) exceeded",
+                tag=tag,
             )
 
         if self.budget.max_include_files is not None and self.budget.include_files + 1 > self.budget.max_include_files:
             _include_error(
                 node,
                 f"maximum include count ({self.budget.max_include_files}) exceeded",
+                tag=tag,
             )
-        try:
-            selection = self.format_registry.select_format(include_source, format_id=resolved.format_id)
-        except UnknownFormatError as exc:
-            _include_error(node, str(exc), exc)
-        descriptor = selection.descriptor
-        adapter = selection.adapter
+
+        return resolved, include_source, source_label
+
+    def _read_include_source(self, node: Node, resolved: ResolvedInclude, source_label: str, *, tag: str) -> bytes:
+        """Read and charge one source against the shared byte/file budgets."""
         remaining_bytes = (
             None
             if self.budget.max_total_include_bytes is None
@@ -473,6 +489,7 @@ class IncludeLoader(SafeLoader):
             _include_error(
                 node,
                 f"maximum total included bytes ({self.budget.max_total_include_bytes}) exceeded",
+                tag=tag,
             )
         active_byte_limits = tuple(
             limit for limit in (self.budget.max_file_bytes, remaining_bytes) if limit is not None
@@ -486,14 +503,46 @@ class IncludeLoader(SafeLoader):
                     node,
                     f"include source {source_label} exceeds the per-file size limit "
                     f"({self.budget.max_file_bytes} bytes)",
+                    tag=tag,
                 )
             if remaining_bytes is not None and len(content) > remaining_bytes:
                 _include_error(
                     node,
                     f"maximum total included bytes ({self.budget.max_total_include_bytes}) exceeded",
+                    tag=tag,
                 )
             self.budget.include_files += 1
             self.budget.include_bytes += len(content)
+            return content
+        except yaml.YAMLError:
+            raise
+        except (OSError, TypeError, ValueError) as exc:
+            _include_error(node, f"cannot read include source {source_label}: {exc}", exc, tag=tag)
+
+    def _include_text(self, node: Node) -> str:
+        """Include a bounded source as exact, strictly decoded UTF-8 text."""
+        resolved, _include_source, source_label = self._resolve_include_source(node, tag=INCLUDE_TEXT_TAG)
+        content = self._read_include_source(node, resolved, source_label, tag=INCLUDE_TEXT_TAG)
+        try:
+            return content.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            _include_error(
+                node,
+                f"include source {source_label} is not UTF-8 text",
+                exc,
+                tag=INCLUDE_TEXT_TAG,
+            )
+
+    def _include(self, node: Node) -> object:
+        resolved, include_source, source_label = self._resolve_include_source(node, tag=INCLUDE_TAG)
+        try:
+            selection = self.format_registry.select_format(include_source, format_id=resolved.format_id)
+        except UnknownFormatError as exc:
+            _include_error(node, str(exc), exc)
+        descriptor = selection.descriptor
+        adapter = selection.adapter
+        content = self._read_include_source(node, resolved, source_label, tag=INCLUDE_TAG)
+        try:
             if adapter is not None:
                 format_input = FormatInput(include_source, source_label, content)
                 if descriptor.capability == "records":
@@ -704,6 +753,10 @@ class IncludeLoader(SafeLoader):
 IncludeLoader.add_constructor(
     INCLUDE_TAG,
     IncludeLoader._construct_include,  # pyright: ignore[reportPrivateUsage]
+)
+IncludeLoader.add_constructor(
+    INCLUDE_TEXT_TAG,
+    IncludeLoader._construct_include_text,  # pyright: ignore[reportPrivateUsage]
 )
 IncludeLoader.add_constructor(
     DELETE_TAG,
@@ -1300,8 +1353,9 @@ class YamlConfigLoader(Generic[_LoaderValue_co]):
         ``allow_absolute_includes=False`` rejects absolute include names.
         ``format_registry`` is copied into a read-only snapshot. Its adapters
         are shared by reference and must be stateless and safe for concurrent
-        calls. The default registry contains the built-in YAML, JSON, and TOML
-        formats.
+        calls. The default registry contains YAML, JSON-family, TOML, CSV, INI,
+        and dotenv adapters. `!include-text` uses the same resolver and budgets
+        without parsing the selected source format.
         """
         validate_yaml_loader(yaml_loader)
         self.include_resolver = include_resolver

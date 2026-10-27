@@ -13,6 +13,9 @@ COMPOSE_LOADER_TAG = "YamlCompose"
 INCLUDE_TAG = "!include"
 """Tag that loads another YAML document."""
 
+INCLUDE_TEXT_TAG = "!include-text"
+"""Tag that includes a UTF-8 file as an unparsed string."""
+
 DELETE_TAG = "!delete"
 """Tag that removes an inherited mapping key."""
 
@@ -36,6 +39,7 @@ __all__ = (
     "DEEP_MERGE_KEY",
     "DELETE_TAG",
     "INCLUDE_TAG",
+    "INCLUDE_TEXT_TAG",
     "LOADER_DIRECTIVE",
     "MERGE_KEY",
     "MERGE_TAG",

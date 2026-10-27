@@ -11,7 +11,8 @@ template language.
 `yaml-compose` adds a small set of opt-in composition semantics to YAML:
 
 - **`<<<`** recursively merges mappings, extending YAML's familiar `<<`.
-- **`!include`** brings another YAML, JSON, or TOML file into the document.
+- **`!include`** brings another YAML, JSON-family, TOML, CSV, INI, or dotenv file into the document.
+- **`!include-text`** loads a local UTF-8 file as an unparsed string.
 - **`!delete`** removes a key during an overlay.
 - **`!replace`** explicitly replaces a mapping instead of merging it.
 - **`!spread`** inserts elements from another sequence.
@@ -87,9 +88,10 @@ YAML files can still be loaded without modification.
 ## Include JSON-family and TOML sources
 
 `!include` selects a parser from the resolved source suffix: `.json`, `.jsonc`,
-`.json5`, `.jsonl`, `.ndjson`, or `.toml`. Unknown suffixes keep the existing
-YAML behavior. YAML remains the composition layer, so included mappings use the
-same merge, replace, delete, and spread operations.
+`.json5`, `.jsonl`, `.ndjson`, `.csv`, `.toml`, or `.ini`. It also recognizes
+`.dotenv` and the exact basename `.env`. Unknown suffixes keep the existing YAML
+behavior. YAML remains the composition layer, so included mappings use the same
+merge, replace, delete, and spread operations.
 
 `.json` is strict JSON. `.jsonc` allows `//` and `/* ... */` comments but keeps
 strict JSON rules, including rejection of duplicate keys, trailing commas, and
@@ -110,10 +112,32 @@ semantics, the optional dependency, and adapter API.
 Python 3.10 uses the declared `tomli` dependency; Python 3.11 and later use the
 standard-library TOML parser.
 
+INI values remain strings and keys retain their case. `[DEFAULT]` values are
+available under the returned `DEFAULT` key and inherited by each named section.
+`.conf` and `.cfg` are ambiguous, so opt into them on a configured registry.
+Dotenv values also remain strings; the parser never reads or changes process
+environment variables and never expands `${...}` or runs shell syntax. Use
+`!include-text` for Markdown, templates, scripts, or other files whose contents
+should remain exact text, including whitespace and line endings. The
+[worked examples](docs/examples.md#ini-dotenv-and-text-includes) show these forms.
+
 The runnable [`include_formats.yaml`](examples/include_formats.yaml) example combines
 a JSON defaults object, a TOML database table, and a JSON list spread. Its exact
 result is checked by [`tests/test_examples.py`](tests/test_examples.py); the
 [worked guide](docs/examples.md#include-json-and-toml-sources) shows each source.
+
+## Include CSV rows
+
+CSV defaults to a list of rows, with every cell kept as a string and the first row
+included as data. It never guesses whether the file has headers. To get a list of
+dictionaries, configure a loader with `CsvAdapter(mode="dicts")`; that mode treats
+the first row as headers and rejects empty or duplicate names and rows with a
+different number of cells. Neither mode converts numbers or dates, and delimiter
+sniffing is disabled. Parsing follows Python's CSV reader rules rather than validating the
+full RFC 4180 grammar. The runtime's `csv.field_size_limit()` adds a per-field limit separate
+from include byte budgets; the adapter does not change that process-wide setting. See
+[CSV examples](docs/examples.md#csv-rows-and-header-records) and the
+[format guide](docs/formats.md#csv-rows-and-header-records) for details.
 
 ## Composition that reads like YAML
 
@@ -426,15 +450,17 @@ tags.
 
 By default, parsing uses PyYAML's `SafeLoader`.
 
-Included `.json`, `.jsonl`, `.ndjson`, and `.toml` files use the built-in strict JSON,
-record JSON, and TOML adapters.
+Included `.json`, `.jsonc`, `.json5`, `.jsonl`, `.ndjson`, `.csv`, `.toml`, `.ini`,
+`.dotenv`, and `.env` files use their built-in adapters. `!include-text` loads a source
+as an exact UTF-8 string without format parsing.
 YAML still owns composition: merge, delete, replace, and spread operators are expressed in
 the including YAML document. You can register a parser for another included-file suffix on a
 `FormatRegistry` and pass that registry to `YamlConfigLoader` or any loading function. See
 the [format adapter guide](docs/formats.md) for a short example and the adapter contract.
 
 Default calls use the public `YamlType` result alias, which includes the native scalar values
-from the built-in YAML, JSON, and TOML parsers, including TOML dates and times. Supplying a
+from the built-in YAML, JSON-family, TOML, CSV, INI, and dotenv parsers, including TOML dates
+and times. Supplying a
 custom `FormatRegistry` or `yaml_loader` broadens the result to `object`, since those trusted
 extensions can return arbitrary Python values. Narrow or validate that result against your
 application's schema before accessing fields.

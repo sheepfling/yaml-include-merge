@@ -1,0 +1,5 @@
+%LOADER YamlCompose
+---
+service: !include ./include_non_yaml/service.ini
+environment: !include ./include_non_yaml/.env
+notes: !include-text ./include_non_yaml/notes.md

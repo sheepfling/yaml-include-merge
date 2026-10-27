@@ -10,8 +10,11 @@ import yaml
 
 from examples.custom_loader import load_example as load_custom_loader_example
 from examples.in_memory_config import load_example
+from examples.include_csv import load_example as load_csv_example
 from examples.include_formats import load_example as load_include_formats_example
 from examples.include_limits import load_example as load_unbounded_example
+from examples.include_non_yaml import load_conf_alias_example
+from examples.include_non_yaml import load_example as load_non_yaml_example
 from examples.include_search import load_example as load_search_example
 from examples.load_config import load_examples
 from yaml_compose import IncludeSearch, load_yaml_file
@@ -122,6 +125,36 @@ def test_record_formats_example_has_the_documented_result(examples_path: Path) -
         "records": [{"event": "started", "service": "api"}, None],
         "steps": ["prepare", "lint", {"suite": "unit", "passed": True}, "deploy"],
     }
+
+
+def test_csv_example_shows_both_explicit_result_shapes() -> None:
+    assert load_csv_example() == {
+        "rows": {
+            "people": [
+                ["name", "note"],
+                ["Ada", "likes, commas"],
+                ["Grace", "first line\nsecond line"],
+            ]
+        },
+        "records": {
+            "people": [
+                {"name": "Ada", "note": "likes, commas"},
+                {"name": "Grace", "note": "first line\nsecond line"},
+            ]
+        },
+    }
+
+
+def test_ini_dotenv_and_text_examples_have_documented_results() -> None:
+    assert load_non_yaml_example() == {
+        "service": {
+            "DEFAULT": {"Region": "us-east"},
+            "Service": {"Region": "us-east", "Host": "api.example.test", "Port": "8080"},
+        },
+        "environment": {"SERVICE_TOKEN": "development-token", "FEATURE_FLAG": "001"},
+        "notes": "# Operator notes\n\nKeep this Markdown as text, including its trailing newline.\n",
+    }
+    assert load_conf_alias_example() == {"settings": {"Service": {"Name": "background-worker"}}}
 
 
 def test_custom_loader_example_uses_its_tag_inside_a_nested_include() -> None:

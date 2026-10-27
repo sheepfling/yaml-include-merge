@@ -7,12 +7,15 @@ owns resolution, confinement, budgets, and stream lifetime.
 
 from __future__ import annotations
 
+import configparser
+import csv
 import importlib
 import json
 import math
 import re
 from collections.abc import Iterator
 from dataclasses import dataclass
+from io import StringIO
 from typing import ClassVar, Literal, NoReturn, Protocol, cast
 
 from .resolver import IncludeSource
@@ -23,11 +26,12 @@ FormatCapability = Literal["document", "records"]
 
 @dataclass(frozen=True, slots=True)
 class FormatDescriptor:
-    """Stable identifier and case-insensitive suffixes for one input format."""
+    """Stable identifier, case-insensitive suffixes, and exact basenames."""
 
     format_id: str
     suffixes: tuple[str, ...]
     capability: FormatCapability = "document"
+    filenames: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         """Validate and normalize the format's suffix aliases."""
@@ -42,9 +46,18 @@ class FormatDescriptor:
             raise ValueError("format suffixes must be non-empty filename extensions beginning with '.'")
         if len(set(suffixes)) != len(suffixes):
             raise ValueError("format suffixes must be unique")
+        filenames = tuple(filename.lower() for filename in self.filenames)
+        if any(
+            not filename or "\x00" in filename or filename in (".", "..") or "/" in filename or "\\" in filename
+            for filename in filenames
+        ):
+            raise ValueError("format filenames must be non-empty basenames")
+        if len(set(filenames)) != len(filenames):
+            raise ValueError("format filenames must be unique")
         if self.capability not in ("document", "records"):
             raise ValueError("format capability must be 'document' or 'records'")
         object.__setattr__(self, "suffixes", suffixes)
+        object.__setattr__(self, "filenames", filenames)
 
 
 @dataclass(frozen=True, slots=True)
@@ -357,6 +370,79 @@ class NdjsonAdapter:
         )
 
 
+def _iter_csv_records(source: FormatInput, *, mode: Literal["rows", "dicts"]) -> Iterator[object]:
+    """Yield CSV rows or header-keyed records from bounded UTF-8 input."""
+    try:
+        text = source.data.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise FormatParseError(f"CSV source is not UTF-8 text (invalid byte at offset {exc.start})") from exc
+    if text.startswith("\ufeff"):
+        raise FormatParseError("UTF-8 byte-order mark (BOM) is not supported")
+
+    with StringIO(text, newline="") as stream:
+        reader = csv.reader(stream, strict=True)
+        if mode == "rows":
+            try:
+                yield from reader
+            except csv.Error as exc:
+                line = max(reader.line_num, 1)
+                raise FormatParseError(f"CSV parse error at line {line}: {exc}") from exc
+            return
+
+        try:
+            headers = next(reader)
+        except StopIteration:
+            return
+        except csv.Error as exc:
+            line = max(reader.line_num, 1)
+            raise FormatParseError(f"CSV parse error at line {line}: {exc}") from exc
+
+        header_line = max(reader.line_num, 1)
+        if not headers:
+            raise FormatParseError(f"CSV header row at line {header_line} is empty")
+        for column, header in enumerate(headers, start=1):
+            if header == "":
+                raise FormatParseError(f"CSV header at line {header_line}, column {column} is empty")
+        seen: set[str] = set()
+        for column, header in enumerate(headers, start=1):
+            if header in seen:
+                raise FormatParseError(f"CSV header at line {header_line}, column {column} duplicates {header!r}")
+            seen.add(header)
+
+        try:
+            for row in reader:
+                line = max(reader.line_num, 1)
+                if len(row) != len(headers):
+                    raise FormatParseError(
+                        f"CSV record ending at line {line} has {len(row)} columns; expected {len(headers)}"
+                    )
+                yield dict(zip(headers, row, strict=True))
+        except csv.Error as exc:
+            line = max(reader.line_num, 1)
+            raise FormatParseError(f"CSV parse error at line {line}: {exc}") from exc
+
+
+@dataclass(frozen=True, slots=True)
+class CsvAdapter:
+    """Parse CSV as row lists or explicitly header-keyed dictionaries.
+
+    The default ``rows`` mode does not infer a header. ``dicts`` mode treats
+    the first row as column names and validates every subsequent row's width.
+    """
+
+    mode: Literal["rows", "dicts"] = "rows"
+    descriptor: ClassVar[FormatDescriptor] = FormatDescriptor("csv", (".csv",), capability="records")
+
+    def __post_init__(self) -> None:
+        """Reject unsupported modes rather than guessing CSV shape."""
+        if self.mode not in ("rows", "dicts"):
+            raise ValueError("CSV mode must be 'rows' or 'dicts'")
+
+    def iter_records(self, source: FormatInput, /) -> Iterator[object]:
+        """Yield parsed CSV rows using the adapter's explicit shape policy."""
+        return _iter_csv_records(source, mode=self.mode)
+
+
 class _TomlAdapter:
     descriptor: ClassVar[FormatDescriptor] = FormatDescriptor("toml", (".toml",))
 
@@ -373,11 +459,111 @@ class _TomlAdapter:
             raise FormatParseError(str(exc)) from exc
 
 
+class _CasePreservingConfigParser(configparser.ConfigParser):
+    def optionxform(self, optionstr: str) -> str:
+        """Retain the spelling of INI option keys."""
+        return optionstr
+
+
+class IniAdapter:
+    """Parse a conservative INI document into string-valued section mappings."""
+
+    descriptor: ClassVar[FormatDescriptor] = FormatDescriptor("ini", (".ini",))
+
+    def parse(self, source: FormatInput, /) -> object:
+        """Return defaults and sections while retaining key case and strings."""
+        try:
+            text = source.data.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise FormatParseError(f"INI source is not UTF-8 text (invalid byte at offset {exc.start})") from exc
+        if text.startswith("\ufeff"):
+            raise FormatParseError("UTF-8 byte-order mark (BOM) is not supported")
+
+        parser = _CasePreservingConfigParser(interpolation=None, strict=True)
+        try:
+            parser.read_string(text, source=source.source_name)
+        except (configparser.Error, ValueError) as exc:
+            raise FormatParseError(str(exc)) from exc
+
+        result: dict[str, dict[str, str]] = {}
+        if parser.defaults():
+            result["DEFAULT"] = dict(parser.defaults())
+        for section in parser.sections():
+            result[section] = dict(parser.items(section, raw=True))
+        return result
+
+
+_DOTENV_KEY = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
+
+
+def _parse_dotenv_line(line: str, line_number: int) -> tuple[str, str] | None:
+    """Parse the documented single-line dotenv subset without shell expansion."""
+    stripped = line.strip()
+    if not stripped or stripped.startswith("#"):
+        return None
+    if stripped.startswith("export") and len(stripped) > 6 and stripped[6] in " \t":
+        stripped = stripped[7:].lstrip(" \t")
+    if "=" not in stripped:
+        raise FormatParseError(f"dotenv line {line_number}: expected KEY=value")
+    key_text, raw_value = stripped.split("=", 1)
+    key = key_text.strip()
+    if _DOTENV_KEY.fullmatch(key) is None:
+        raise FormatParseError(f"dotenv line {line_number}: invalid key {key!r}")
+    value = raw_value.strip()
+    if not value:
+        return key, ""
+    if value[0] in "'\"":
+        quote = value[0]
+        escaped = False
+        closing: int | None = None
+        for position in range(1, len(value)):
+            character = value[position]
+            if quote == '"' and character == "\\" and not escaped:
+                escaped = True
+                continue
+            if character == quote and not escaped:
+                closing = position
+                break
+            escaped = False
+        if closing is None:
+            raise FormatParseError(f"dotenv line {line_number}: unterminated quoted value")
+        trailing = value[closing + 1 :].strip()
+        if trailing and not trailing.startswith("#"):
+            raise FormatParseError(f"dotenv line {line_number}: unexpected text after quoted value")
+        return key, value[1:closing]
+    return key, value
+
+
+class DotenvAdapter:
+    """Parse a documented dotenv subset without reading or mutating the environment."""
+
+    descriptor: ClassVar[FormatDescriptor] = FormatDescriptor("dotenv", (".dotenv",), filenames=(".env",))
+
+    def parse(self, source: FormatInput, /) -> object:
+        """Return string values; interpolation and shell syntax are never evaluated."""
+        try:
+            text = source.data.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise FormatParseError(f"dotenv source is not UTF-8 text (invalid byte at offset {exc.start})") from exc
+        if text.startswith("\ufeff"):
+            raise FormatParseError("UTF-8 byte-order mark (BOM) is not supported")
+        result: dict[str, str] = {}
+        for line_number, line in enumerate(text.splitlines(), start=1):
+            item = _parse_dotenv_line(line, line_number)
+            if item is None:
+                continue
+            key, value = item
+            if key in result:
+                raise FormatParseError(f"dotenv line {line_number}: duplicate key {key!r}")
+            result[key] = value
+        return result
+
+
 class FormatRegistry:
     """Mutable registry builder; loaders capture an independent frozen snapshot.
 
     A new registry contains the private YAML composition entry and the built-in
-    strict JSON, JSONC, JSON5, JSONL, NDJSON, and TOML adapters. JSON5 imports its
+    strict JSON, JSONC, JSON5, JSONL, NDJSON, CSV, TOML, INI, and dotenv adapters. JSON5 imports its
     optional parser only when selected. Unknown suffixes continue to use YAML.
     Adapter objects must be stateless; snapshots copy lookup maps, retain immutable
     descriptors, and share adapters. Explicit overrides may replace the same format ID only.
@@ -387,6 +573,7 @@ class FormatRegistry:
         """Create a mutable registry seeded with the built-in formats."""
         self._formats: dict[str, _FormatRegistration] = {}
         self._suffixes: dict[str, str] = {}
+        self._filenames: dict[str, str] = {}
         self._frozen = False
         self._install_yaml()
         self.register(_StrictJsonAdapter())
@@ -394,7 +581,10 @@ class FormatRegistry:
         self.register(_Json5Adapter())
         self.register(_JsonLinesAdapter())
         self.register(NdjsonAdapter())
+        self.register(CsvAdapter())
         self.register(_TomlAdapter())
+        self.register(IniAdapter())
+        self.register(DotenvAdapter())
 
     def _install_yaml(self) -> None:
         descriptor = FormatDescriptor("yaml", (".yaml", ".yml"))
@@ -402,7 +592,14 @@ class FormatRegistry:
         for suffix in descriptor.suffixes:
             self._suffixes[suffix] = descriptor.format_id
 
-    def register(self, adapter: FormatAdapter | RecordFormatAdapter, *, replace: bool = False) -> None:
+    def register(
+        self,
+        adapter: FormatAdapter | RecordFormatAdapter,
+        *,
+        replace: bool = False,
+        suffixes: tuple[str, ...] | None = None,
+        filenames: tuple[str, ...] | None = None,
+    ) -> None:
         """Register an adapter atomically; suffix collisions require same-ID replacement."""
         if self._frozen:
             raise TypeError("a loader's format registry snapshot is read-only")
@@ -411,6 +608,13 @@ class FormatRegistry:
         iter_records = getattr(adapter, "iter_records", None)
         if not isinstance(descriptor, FormatDescriptor):
             raise TypeError("adapter must provide a FormatDescriptor")
+        if suffixes is not None or filenames is not None:
+            descriptor = FormatDescriptor(
+                descriptor.format_id,
+                descriptor.suffixes if suffixes is None else suffixes,
+                descriptor.capability,
+                descriptor.filenames if filenames is None else filenames,
+            )
         if descriptor.capability == "document" and not callable(parse):
             raise TypeError("document adapters must provide a parse(source) method")
         if descriptor.capability == "records" and not callable(iter_records):
@@ -424,20 +628,30 @@ class FormatRegistry:
             raise ValueError(f"format ID {format_id!r} is already registered")
 
         formats = dict(self._formats)
-        suffixes = dict(self._suffixes)
+        suffix_owners = dict(self._suffixes)
+        filenames_by_name = dict(self._filenames)
         if current is not None:
             del formats[format_id]
             for suffix in current.descriptor.suffixes:
-                if suffixes.get(suffix) == format_id:
-                    del suffixes[suffix]
+                if suffix_owners.get(suffix) == format_id:
+                    del suffix_owners[suffix]
+            for filename in current.descriptor.filenames:
+                if filenames_by_name.get(filename) == format_id:
+                    del filenames_by_name[filename]
         for suffix in descriptor.suffixes:
-            owner = suffixes.get(suffix)
+            owner = suffix_owners.get(suffix)
             if owner is not None and owner != format_id:
                 raise ValueError(f"suffix {suffix!r} is already owned by format {owner!r}")
-            suffixes[suffix] = format_id
+            suffix_owners[suffix] = format_id
+        for filename in descriptor.filenames:
+            owner = filenames_by_name.get(filename)
+            if owner is not None and owner != format_id:
+                raise ValueError(f"filename {filename!r} is already owned by format {owner!r}")
+            filenames_by_name[filename] = format_id
         formats[format_id] = _FormatRegistration(descriptor, adapter)
         self._formats = formats
-        self._suffixes = suffixes
+        self._suffixes = suffix_owners
+        self._filenames = filenames_by_name
 
     def unregister(self, format_id: str) -> None:
         """Remove a registered adapter; the built-in YAML entry is reserved."""
@@ -452,6 +666,9 @@ class FormatRegistry:
         for suffix in registration.descriptor.suffixes:
             if self._suffixes.get(suffix) == format_id:
                 del self._suffixes[suffix]
+        for filename in registration.descriptor.filenames:
+            if self._filenames.get(filename) == format_id:
+                del self._filenames[filename]
 
     def get_format(self, format_id: str) -> FormatDescriptor:
         """Return a registered descriptor or raise ``UnknownFormatError``."""
@@ -469,10 +686,11 @@ class FormatRegistry:
         return self.select_format(source, format_id=format_id).descriptor
 
     def select_format(self, source: IncludeSource, *, format_id: str | None = None) -> FormatSelection:
-        """Return the parser selection for a resolved source or explicit format ID.
+        """Return parser selection for a resolved source or explicit format ID.
 
-        An unknown suffix falls back to YAML for backward compatibility. An
-        explicitly unknown ID raises ``UnknownFormatError``.
+        Exact basename aliases are checked before suffix aliases. An unknown
+        suffix falls back to YAML for backward compatibility. An explicitly
+        unknown ID raises ``UnknownFormatError``.
         """
         if format_id is not None:
             try:
@@ -480,7 +698,10 @@ class FormatRegistry:
             except KeyError as exc:
                 raise UnknownFormatError(f"format ID {format_id!r} is not registered") from exc
         else:
-            selected_id = self._suffixes.get(source.path.suffix.lower(), "yaml")
+            selected_id = self._filenames.get(
+                source.path.name.lower(),
+                self._suffixes.get(source.path.suffix.lower(), "yaml"),
+            )
             registration = self._formats[selected_id]
         return FormatSelection(registration.descriptor, registration.adapter)
 
@@ -489,11 +710,13 @@ class FormatRegistry:
         snapshot = object.__new__(FormatRegistry)
         snapshot._formats = dict(self._formats)
         snapshot._suffixes = dict(self._suffixes)
+        snapshot._filenames = dict(self._filenames)
         snapshot._frozen = True
         return snapshot
 
 
 __all__ = (
+    "DotenvAdapter",
     "FormatAdapter",
     "FormatCapability",
     "FormatDependencyError",
@@ -502,6 +725,7 @@ __all__ = (
     "FormatParseError",
     "FormatRegistry",
     "FormatSelection",
+    "IniAdapter",
     "NdjsonAdapter",
     "RecordFormatAdapter",
     "UnknownFormatError",

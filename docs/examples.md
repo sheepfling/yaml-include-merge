@@ -207,6 +207,79 @@ list of records is not a mapping merge source. Exact output is asserted by
 [`tests/test_examples.py`](../tests/test_examples.py); parser and failure cases
 are covered by [`tests/test_record_formats.py`](../tests/test_record_formats.py).
 
+### CSV rows and header records
+
+The runnable [`include_csv.py`](../examples/include_csv.py) example loads the same
+`people.csv` through the default row-list adapter and an explicitly configured
+header-record adapter. The YAML include is:
+
+```yaml
+%LOADER YamlCompose
+---
+people: !include people.csv
+```
+
+The default mode includes the header as a row and leaves every cell as text:
+
+```python
+[["name", "note"], ["Ada", "likes, commas"], ["Grace", "first line\nsecond line"]]
+```
+
+Configuring `CsvAdapter(mode="dicts")` treats the first row as headers:
+
+```python
+[
+    {"name": "Ada", "note": "likes, commas"},
+    {"name": "Grace", "note": "first line\nsecond line"},
+]
+```
+
+The adapter does not guess headers or delimiters, normalize names, or convert values.
+Header mode rejects empty or duplicate names and ragged data rows. Parsing follows the
+standard-library CSV reader's rules, including its accepted quote-inside-unquoted-field
+behavior; `strict=True` does not mean full RFC 4180 validation. The running Python runtime's
+`csv.field_size_limit()` also imposes a per-field character limit, separate from include byte
+budgets. See the [format guide](formats.md#csv-rows-and-header-records) for details. CSV
+parsing and failure cases are covered by [`tests/test_csv_formats.py`](../tests/test_csv_formats.py).
+
+## INI, dotenv, and text includes
+
+The runnable [`include_non_yaml.py`](../examples/include_non_yaml.py) loads these YAML
+references:
+
+```yaml
+%LOADER YamlCompose
+---
+service: !include ./include_non_yaml/service.ini
+environment: !include ./include_non_yaml/.env
+notes: !include-text ./include_non_yaml/notes.md
+```
+
+The `.ini` file contains a `[DEFAULT]` value and a `[Service]` section. Its result retains
+strings and key case:
+
+```python
+{
+    "service": {
+        "DEFAULT": {"Region": "us-east"},
+        "Service": {"Region": "us-east", "Host": "api.example.test", "Port": "8080"},
+    },
+    "environment": {"SERVICE_TOKEN": "development-token", "FEATURE_FLAG": "001"},
+    "notes": "# Operator notes\\n\\nKeep this Markdown as text, including its trailing newline.\\n",
+}
+```
+
+The dotenv reader accepts a small line-oriented syntax, keeps all values as strings, and does
+not access or mutate the process environment. Placeholder-looking text such as `${HOME}` is
+literal. `!include-text` returns the Markdown without parsing or trimming it; it preserves line
+endings and trailing whitespace. Both tags use the configured resolver and the standard include
+budgets.
+
+`.conf` and `.cfg` remain unknown suffixes by default. The example's second loader registers
+them explicitly with `IniAdapter`, then loads [`include_conf.yaml`](../examples/include_conf.yaml).
+See the [format guide](formats.md#ini-dotenv-and-text-includes) for accepted parser syntax and
+error policies.
+
 ## Three filesystem layers
 
 These files live in `examples/`. The first file provides defaults:

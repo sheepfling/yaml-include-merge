@@ -5,8 +5,10 @@
 is parsed into its native Python value; the package does not interpret YAML tags inside it.
 
 The default registry selects YAML for `.yaml` and `.yml`, strict JSON for `.json`, JSONC for
-`.jsonc`, JSON5 for `.json5`, JSON Lines for `.jsonl`, NDJSON for `.ndjson`, and TOML for
-`.toml`. JSONC masks comments and then uses the same strict JSON parser as `.json`; duplicate
+`.jsonc`, JSON5 for `.json5`, JSON Lines for `.jsonl`, NDJSON for `.ndjson`, CSV for `.csv`, TOML for
+`.toml`, and INI for `.ini`. Dotenv is selected for `.dotenv` and the exact basename `.env`.
+Basenames and suffixes match case-insensitively; exact basename aliases are checked first.
+JSONC masks comments and then uses the same strict JSON parser as `.json`; duplicate
 keys, trailing commas, and non-finite values remain errors. Comment masking preserves line
 breaks and token boundaries. JSON5 is optional:
 install `yaml-compose[json5]` to enable it. Its parser loads lazily only when a `.json5` source
@@ -66,9 +68,113 @@ therefore return a buffered list: a late record error fails the whole include an
 escapes. This is not constant-memory file streaming. YAML `!spread` can insert records into a
 sequence. A record list is not a mapping, so it cannot be used as a `<<` or `<<<` merge source.
 
+## CSV rows and header records
+
+The built-in `.csv` adapter uses Python's standard-library `csv.reader` with its default
+Excel-style comma and quoting rules, `strict=True`, and no dialect or header sniffing. This
+uses the standard-library parser's rules; it is not a full RFC 4180 validator. For example,
+a quote inside an unquoted field is accepted as a literal character, while an unclosed quoted
+field or non-delimiter text after a closing quote raises a parse error. Input must be UTF-8
+without a BOM. Every cell remains a string; values such as `001`, `true`, and `3.5` are not
+converted.
+
+The standard-library `csv.field_size_limit()` is an additional per-field parser limit. Its
+value comes from the running Python runtime and is not fixed by `yaml-compose`. On the tested
+CPython 3.10–3.14 runtimes, the reader applies it to decoded field characters (so a multibyte
+UTF-8 character counts as one field character), independently of the include byte budgets.
+The adapter does not read or change the process-wide setting; callers who change it affect
+other CSV readers in that process too.
+
+By default, CSV includes return a list of row lists and the first row is ordinary data:
+
+```yaml
+%LOADER YamlCompose
+---
+rows: !include people.csv
+steps: [prepare, !spread [!include people.csv]]
+```
+
+To interpret the first row as headers and return dictionaries, replace the built-in adapter
+in that loader's registry:
+
+```python
+from yaml_compose import CsvAdapter, FormatRegistry, YamlConfigLoader
+
+formats = FormatRegistry()
+formats.register(CsvAdapter(mode="dicts"), replace=True)
+loader = YamlConfigLoader(format_registry=formats)
+```
+
+Header names and cell values are kept exactly as parsed. Header mode rejects empty or
+duplicate header names and rejects each data row whose number of cells differs from the
+header. Row-list mode keeps varying row widths. A physically blank line is an empty row in
+row-list mode; in header mode it is an empty header or a ragged row. Empty input returns `[]`
+in either mode, and a header-only file returns `[]` records in header mode. Parser errors
+include the source and the physical line reported by the CSV reader. Both modes use the
+shared include resolver, confinement, cycle checks, and byte/file/depth budgets. Results are
+buffered lists, not streaming iterators.
+
+The runnable [`include_csv.py`](../examples/include_csv.py) example loads the same YAML
+include once in each mode; its exact result is checked by `tests/test_examples.py`.
+
+## INI, dotenv, and text includes
+
+The built-in `.ini` adapter uses `configparser` with interpolation disabled, strict duplicate
+checking, case-preserving keys, and string values. It returns a mapping with a `DEFAULT` entry
+when default values exist, followed by named sections. Each named section includes the values
+inherited from `[DEFAULT]`, as `ConfigParser.items(section, raw=True)` does. Duplicate keys or
+sections within one file and content outside a section are errors. Values remain text; the
+adapter does not convert numbers, booleans, or `${...}` placeholders. `ConfigParser` removes
+surrounding formatting whitespace around keys and values and supports its standard indented
+multiline values. Whole-line `#` and `;` comments use the standard parser defaults; inline
+comments are disabled, so those characters remain part of a value. See the
+[Python `configparser` documentation](https://docs.python.org/3/library/configparser.html) for
+the underlying INI syntax and parser behavior. `.conf` and `.cfg` are not guessed as INI. A
+caller can explicitly add those aliases to its own registry:
+
+```python
+from yaml_compose import FormatRegistry, IniAdapter, YamlConfigLoader
+
+formats = FormatRegistry()
+formats.register(IniAdapter(), replace=True, suffixes=(".ini", ".conf", ".cfg"))
+loader = YamlConfigLoader(format_registry=formats)
+```
+
+The default dotenv adapter accepts a documented line-oriented subset: blank and full-line
+`#` comments, `KEY=value`, and optional `export KEY=value`. Keys follow shell environment
+identifier spelling. Values are strings; surrounding single or double quotes are removed, while
+their contents remain literal. A trailing `#` comment is accepted after a quoted value. In an
+unquoted value, `#` is literal. `${NAME}`, backticks, command syntax, and backslashes are never
+expanded or executed. Duplicate keys, malformed assignments, and unterminated quotes fail with
+the physical line number. This is a parser only: it does not inspect or mutate `os.environ`.
+The adapter does not claim full compatibility with every dotenv dialect. Both INI and dotenv
+inputs require strict UTF-8 without a BOM; parser errors retain the include source context.
+
+Use `!include-text` when a source should remain text rather than be parsed as a document:
+
+```yaml
+%LOADER YamlCompose
+---
+template: !include-text ./templates/service.md
+```
+
+It resolves and confines the path with the same resolver as `!include`, reads under the same
+file/count/total-byte budgets, closes the source stream, and decodes strict UTF-8. It preserves
+all decoded characters, including leading/trailing whitespace, CRLF, a final newline, and a
+UTF-8 BOM character. It does not dispatch by suffix, parse YAML, apply directives, or execute
+content. Use regular `!include` for typed YAML composition. Raw bytes are not exposed by this
+tag.
+
+[`include_non_yaml.py`](../examples/include_non_yaml.py) exercises the default INI, dotenv, and
+text paths and explicitly opts into `.conf`. Exact results and failure cases are covered by
+[`tests/test_ini_dotenv_formats.py`](../tests/test_ini_dotenv_formats.py) and
+[`tests/test_include_text.py`](../tests/test_include_text.py).
+
 ## Register a parser
 
-An adapter describes its stable format ID and suffixes, then parses one complete input:
+An adapter describes its stable format ID and suffixes, then parses one complete input. Exact
+filenames can be declared for names such as `.env`; callers may also replace an adapter's suffix
+and filename aliases when registering it:
 
 ```python
 from yaml_compose import FormatDescriptor, FormatInput, FormatRegistry, YamlConfigLoader
@@ -129,7 +235,9 @@ YAML include mark and preserves the exception chain.
 - A registry is mutable while being configured. Each loader captures a read-only snapshot,
   so later registry changes affect new loaders only. Registering a duplicate ID or suffix
   fails atomically. `replace=True` can replace an adapter with the same ID; it cannot take a
-  suffix owned by another ID.
+  suffix or exact filename owned by another ID. The `suffixes=` and `filenames=` registration
+  arguments replace that adapter's aliases in the new registration; use them to opt into
+  ambiguous extensions such as `.conf`/`.cfg`.
 - The built-in YAML entry stays private to the loader so PyYAML nodes, constructors, and
   source marks retain their current behavior. A `FormatSelection` for YAML has no public
   adapter. JSONC uses strict JSON values, JSON5 keeps native parser values including special
