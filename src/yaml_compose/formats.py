@@ -370,7 +370,24 @@ class NdjsonAdapter:
         )
 
 
-def _iter_csv_records(source: FormatInput, *, mode: Literal["rows", "dicts"]) -> Iterator[object]:
+def _validate_csv_headers(headers: object) -> None:
+    """Validate explicitly supplied field names at the untyped call boundary."""
+    if not isinstance(headers, tuple) or not headers:
+        raise ValueError("CSV headers must be a non-empty tuple of unique, non-empty strings")
+    header_items = cast(tuple[object, ...], headers)
+    if any(not isinstance(header, str) or not header for header in header_items):
+        raise ValueError("CSV headers must be a non-empty tuple of unique, non-empty strings")
+    header_values = cast(tuple[str, ...], header_items)
+    if len(set(header_values)) != len(header_values):
+        raise ValueError("CSV headers must be a non-empty tuple of unique, non-empty strings")
+
+
+def _iter_csv_records(
+    source: FormatInput,
+    *,
+    mode: Literal["rows", "dicts"],
+    headers: tuple[str, ...] | None,
+) -> Iterator[object]:
     """Yield CSV rows or header-keyed records from bounded UTF-8 input."""
     try:
         text = source.data.decode("utf-8")
@@ -389,22 +406,28 @@ def _iter_csv_records(source: FormatInput, *, mode: Literal["rows", "dicts"]) ->
                 raise FormatParseError(f"CSV parse error at line {line}: {exc}") from exc
             return
 
-        try:
-            headers = next(reader)
-        except StopIteration:
+        header_values: list[str]
+        if headers is None:
+            try:
+                header_values = next(reader)
+            except StopIteration:
+                return
+            except csv.Error as exc:
+                line = max(reader.line_num, 1)
+                raise FormatParseError(f"CSV parse error at line {line}: {exc}") from exc
+        elif not text:
             return
-        except csv.Error as exc:
-            line = max(reader.line_num, 1)
-            raise FormatParseError(f"CSV parse error at line {line}: {exc}") from exc
+        else:
+            header_values = list(headers)
 
-        header_line = max(reader.line_num, 1)
-        if not headers:
+        header_line = max(reader.line_num, 1) if mode == "dicts" else 1
+        if not header_values:
             raise FormatParseError(f"CSV header row at line {header_line} is empty")
-        for column, header in enumerate(headers, start=1):
+        for column, header in enumerate(header_values, start=1):
             if header == "":
                 raise FormatParseError(f"CSV header at line {header_line}, column {column} is empty")
         seen: set[str] = set()
-        for column, header in enumerate(headers, start=1):
+        for column, header in enumerate(header_values, start=1):
             if header in seen:
                 raise FormatParseError(f"CSV header at line {header_line}, column {column} duplicates {header!r}")
             seen.add(header)
@@ -412,11 +435,11 @@ def _iter_csv_records(source: FormatInput, *, mode: Literal["rows", "dicts"]) ->
         try:
             for row in reader:
                 line = max(reader.line_num, 1)
-                if len(row) != len(headers):
+                if len(row) != len(header_values):
                     raise FormatParseError(
-                        f"CSV record ending at line {line} has {len(row)} columns; expected {len(headers)}"
+                        f"CSV record ending at line {line} has {len(row)} columns; expected {len(header_values)}"
                     )
-                yield dict(zip(headers, row, strict=True))
+                yield dict(zip(header_values, row, strict=True))
         except csv.Error as exc:
             line = max(reader.line_num, 1)
             raise FormatParseError(f"CSV parse error at line {line}: {exc}") from exc
@@ -428,19 +451,25 @@ class CsvAdapter:
 
     The default ``rows`` mode does not infer a header. ``dicts`` mode treats
     the first row as column names and validates every subsequent row's width.
+    Supply ``headers`` in ``dicts`` mode to use explicit field names instead.
     """
 
     mode: Literal["rows", "dicts"] = "rows"
+    headers: tuple[str, ...] | None = None
     descriptor: ClassVar[FormatDescriptor] = FormatDescriptor("csv", (".csv",), capability="records")
 
     def __post_init__(self) -> None:
         """Reject unsupported modes rather than guessing CSV shape."""
         if self.mode not in ("rows", "dicts"):
             raise ValueError("CSV mode must be 'rows' or 'dicts'")
+        if self.headers is not None:
+            if self.mode != "dicts":
+                raise ValueError("CSV headers can only be supplied in 'dicts' mode")
+            _validate_csv_headers(self.headers)
 
     def iter_records(self, source: FormatInput, /) -> Iterator[object]:
         """Yield parsed CSV rows using the adapter's explicit shape policy."""
-        return _iter_csv_records(source, mode=self.mode)
+        return _iter_csv_records(source, mode=self.mode, headers=self.headers)
 
 
 class _TomlAdapter:

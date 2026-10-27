@@ -1,12 +1,14 @@
 # Included document formats
 
 `yaml-compose` uses YAML as its composition language. An including YAML document owns the
-`!include`, merge, `!delete`, `!replace`, and `!spread` operations. An included non-YAML file
-is parsed into its native Python value; the package does not interpret YAML tags inside it.
+`!include`, `!include-table`, `!include-text`, `!include-raw`, merge, `!delete`, `!replace`,
+and `!spread` operations. An included non-YAML document is parsed into its native Python value;
+the package does not interpret YAML tags inside it.
 
 The default registry selects YAML for `.yaml` and `.yml`, strict JSON for `.json`, JSONC for
-`.jsonc`, JSON5 for `.json5`, JSON Lines for `.jsonl`, NDJSON for `.ndjson`, CSV for `.csv`, TOML for
-`.toml`, and INI for `.ini`. Dotenv is selected for `.dotenv` and the exact basename `.env`.
+`.jsonc`, JSON5 for `.json5`, JSON Lines for `.jsonl`, NDJSON for `.ndjson`, TOML for `.toml`, and
+INI for `.ini`. The registry also selects the CSV adapter for `.csv`, which is used only by
+`!include-table`. Dotenv is selected for `.dotenv` and the exact basename `.env`.
 Basenames and suffixes match case-insensitively; exact basename aliases are checked first.
 JSONC masks comments and then uses the same strict JSON parser as `.json`; duplicate
 keys, trailing commas, and non-finite values remain errors. Comment masking preserves line
@@ -70,7 +72,9 @@ sequence. A record list is not a mapping, so it cannot be used as a `<<` or `<<<
 
 ## CSV rows and header records
 
-The built-in `.csv` adapter uses Python's standard-library `csv.reader` with its default
+The built-in `.csv` adapter is invoked with `!include-table`, not `!include`. Using `.csv` with
+ordinary `!include` is a marked error explaining the table tag requirement; the input is never
+silently interpreted as YAML. The adapter uses Python's standard-library `csv.reader` with its default
 Excel-style comma and quoting rules, `strict=True`, and no dialect or header sniffing. This
 uses the standard-library parser's rules; it is not a full RFC 4180 validator. For example,
 a quote inside an unquoted field is accepted as a literal character, while an unclosed quoted
@@ -85,13 +89,13 @@ UTF-8 character counts as one field character), independently of the include byt
 The adapter does not read or change the process-wide setting; callers who change it affect
 other CSV readers in that process too.
 
-By default, CSV includes return a list of row lists and the first row is ordinary data:
+By default, CSV tables return a list of row lists and the first row is ordinary data:
 
 ```yaml
 %LOADER YamlCompose
 ---
-rows: !include people.csv
-steps: [prepare, !spread [!include people.csv]]
+rows: !include-table people.csv
+steps: [prepare, !spread [!include-table people.csv]]
 ```
 
 To interpret the first row as headers and return dictionaries, replace the built-in adapter
@@ -105,6 +109,16 @@ formats.register(CsvAdapter(mode="dicts"), replace=True)
 loader = YamlConfigLoader(format_registry=formats)
 ```
 
+Alternatively, provide explicit header names. The first CSV row is then data:
+
+```python
+from yaml_compose import CsvAdapter, FormatRegistry, YamlConfigLoader
+
+formats = FormatRegistry()
+formats.register(CsvAdapter(mode="dicts", headers=("id", "name")), replace=True)
+loader = YamlConfigLoader(format_registry=formats)
+```
+
 Header names and cell values are kept exactly as parsed. Header mode rejects empty or
 duplicate header names and rejects each data row whose number of cells differs from the
 header. Row-list mode keeps varying row widths. A physically blank line is an empty row in
@@ -113,6 +127,9 @@ in either mode, and a header-only file returns `[]` records in header mode. Pars
 include the source and the physical line reported by the CSV reader. Both modes use the
 shared include resolver, confinement, cycle checks, and byte/file/depth budgets. Results are
 buffered lists, not streaming iterators.
+
+CSV dispatch through `!include` was part of an unpublished local prototype. This candidate
+requires `!include-table` so the table-shaped interpretation is visible in YAML.
 
 The runnable [`include_csv.py`](../examples/include_csv.py) example loads the same YAML
 include once in each mode; its exact result is checked by `tests/test_examples.py`.
@@ -150,7 +167,7 @@ the physical line number. This is a parser only: it does not inspect or mutate `
 The adapter does not claim full compatibility with every dotenv dialect. Both INI and dotenv
 inputs require strict UTF-8 without a BOM; parser errors retain the include source context.
 
-Use `!include-text` when a source should remain text rather than be parsed as a document:
+Use `!include-text` when a source should remain decoded text rather than be parsed as a document:
 
 ```yaml
 %LOADER YamlCompose
@@ -169,6 +186,20 @@ tag.
 text paths and explicitly opts into `.conf`. Exact results and failure cases are covered by
 [`tests/test_ini_dotenv_formats.py`](../tests/test_ini_dotenv_formats.py) and
 [`tests/test_include_text.py`](../tests/test_include_text.py).
+
+Use `!include-raw` when a source must remain exact bytes:
+
+```yaml
+%LOADER YamlCompose
+---
+payload: !include-raw ./assets/payload.bin
+```
+
+It returns the resolver's original bytes without decoding, parsing, or executing them. NUL and
+non-UTF-8 bytes are preserved. Path resolution, root confinement, stream ownership, include
+depth/count, and byte limits are the same as for `!include` and `!include-text`. Custom resolvers
+must provide a binary stream; a text stream is rejected rather than encoded. Python `bytes` values
+are not JSON-serializable without an explicit application conversion.
 
 ## Register a parser
 

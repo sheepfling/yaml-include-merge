@@ -18,12 +18,14 @@ links the runnable example files to the tests that check their results. Run
 - [include_records.yaml](include_records.yaml) includes a JSON Lines list and
   spreads NDJSON records; the [worked guide](../docs/examples.md#json-lines-and-ndjson-records)
   documents buffered record semantics.
-- [include_csv.py](include_csv.py) loads CSV once as row lists and once as
-  header-keyed dictionaries; the [worked guide](../docs/examples.md#csv-rows-and-header-records)
-  describes the explicit modes.
+- [include_csv.py](include_csv.py) loads CSV with `!include-table`, once as row
+  lists and once as header-keyed dictionaries; the
+  [worked guide](../docs/examples.md#csv-rows-and-header-records) describes the
+  explicit modes and header options.
 - [include_non_yaml.py](include_non_yaml.py) includes INI, dotenv, and literal
-  text through YAML. It also opts into `.conf` parsing explicitly; the
-  [Markdown payload](include_non_yaml/notes.md) is included as raw text. The
+  text and raw bytes through YAML. It also opts into `.conf` parsing explicitly;
+  the [Markdown payload](include_non_yaml/notes.md) is included as text and the
+  [binary payload](include_non_yaml/payload.bin) as bytes. The
   [worked guide](../docs/examples.md#ini-dotenv-and-text-includes) documents the
   returned shapes and safety boundaries.
 - [shallow_merge.yaml](shallow_merge.yaml) replaces a nested mapping with `<<`.

@@ -216,7 +216,7 @@ header-record adapter. The YAML include is:
 ```yaml
 %LOADER YamlCompose
 ---
-people: !include people.csv
+people: !include-table people.csv
 ```
 
 The default mode includes the header as a row and leaves every cell as text:
@@ -225,7 +225,8 @@ The default mode includes the header as a row and leaves every cell as text:
 [["name", "note"], ["Ada", "likes, commas"], ["Grace", "first line\nsecond line"]]
 ```
 
-Configuring `CsvAdapter(mode="dicts")` treats the first row as headers:
+Configuring `CsvAdapter(mode="dicts")` treats the first row as headers. Supplying
+`headers=("id", "name")` uses explicit names and treats every CSV row as data:
 
 ```python
 [
@@ -253,6 +254,7 @@ references:
 service: !include ./include_non_yaml/service.ini
 environment: !include ./include_non_yaml/.env
 notes: !include-text ./include_non_yaml/notes.md
+payload: !include-raw ./include_non_yaml/payload.bin
 ```
 
 The `.ini` file contains a `[DEFAULT]` value and a `[Service]` section. Its result retains
@@ -265,15 +267,17 @@ strings and key case:
         "Service": {"Region": "us-east", "Host": "api.example.test", "Port": "8080"},
     },
     "environment": {"SERVICE_TOKEN": "development-token", "FEATURE_FLAG": "001"},
-    "notes": "# Operator notes\\n\\nKeep this Markdown as text, including its trailing newline.\\n",
+    "notes": "# Operator notes\n\nKeep this Markdown as text, including its trailing newline.\n",
+    "payload": b"\x00binary\xff\r\n",
 }
 ```
 
 The dotenv reader accepts a small line-oriented syntax, keeps all values as strings, and does
 not access or mutate the process environment. Placeholder-looking text such as `${HOME}` is
 literal. `!include-text` returns the Markdown without parsing or trimming it; it preserves line
-endings and trailing whitespace. Both tags use the configured resolver and the standard include
-budgets.
+endings and trailing whitespace. `!include-text` uses the configured resolver and standard
+include budgets. `!include-raw` returns the exact bytes, including NUL and non-UTF-8 values,
+without decoding or parsing them.
 
 `.conf` and `.cfg` remain unknown suffixes by default. The example's second loader registers
 them explicitly with `IniAdapter`, then loads [`include_conf.yaml`](../examples/include_conf.yaml).

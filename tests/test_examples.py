@@ -153,6 +153,7 @@ def test_ini_dotenv_and_text_examples_have_documented_results() -> None:
         },
         "environment": {"SERVICE_TOKEN": "development-token", "FEATURE_FLAG": "001"},
         "notes": "# Operator notes\n\nKeep this Markdown as text, including its trailing newline.\n",
+        "payload": b"\x00binary\xff\r\n",
     }
     assert load_conf_alias_example() == {"settings": {"Service": {"Name": "background-worker"}}}
 

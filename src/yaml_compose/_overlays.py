@@ -19,8 +19,8 @@ from yaml.error import Mark
 from .tags import DELETE_TAG, REPLACE_TAG, SPREAD_TAG
 
 YamlDict = dict[Hashable, object]
-# Built-in SafeLoader, strict JSON, and TOML values. Mapping and sequence
-# contents stay object-typed so TOML's native date/time values remain valid.
+# Built-in SafeLoader, strict JSON, TOML, and raw-byte include values. Mapping
+# and sequence contents stay object-typed so native date/time values remain valid.
 YamlType = YamlDict | list[object] | str | int | float | bool | None | bytes | date | datetime | time | set[Hashable]
 DELETE = object()
 

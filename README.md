@@ -11,8 +11,10 @@ template language.
 `yaml-compose` adds a small set of opt-in composition semantics to YAML:
 
 - **`<<<`** recursively merges mappings, extending YAML's familiar `<<`.
-- **`!include`** brings another YAML, JSON-family, TOML, CSV, INI, or dotenv file into the document.
+- **`!include`** brings another YAML, JSON-family, TOML, INI, or dotenv file into the document.
+- **`!include-table`** loads CSV as row lists or header-keyed records.
 - **`!include-text`** loads a local UTF-8 file as an unparsed string.
+- **`!include-raw`** loads a local file as its exact bytes.
 - **`!delete`** removes a key during an overlay.
 - **`!replace`** explicitly replaces a mapping instead of merging it.
 - **`!spread`** inserts elements from another sequence.
@@ -88,7 +90,7 @@ YAML files can still be loaded without modification.
 ## Include JSON-family and TOML sources
 
 `!include` selects a parser from the resolved source suffix: `.json`, `.jsonc`,
-`.json5`, `.jsonl`, `.ndjson`, `.csv`, `.toml`, or `.ini`. It also recognizes
+`.json5`, `.jsonl`, `.ndjson`, `.toml`, or `.ini`. It also recognizes
 `.dotenv` and the exact basename `.env`. Unknown suffixes keep the existing YAML
 behavior. YAML remains the composition layer, so included mappings use the same
 merge, replace, delete, and spread operations.
@@ -98,8 +100,8 @@ strict JSON rules, including rejection of duplicate keys, trailing commas, and
 non-finite numbers. `.json5` supports JSON5 syntax; install
 `yaml-compose[json5]` to enable it. JSON5 duplicate keys are rejected. Its
 `NaN`, `Infinity`, and decimal overflow values remain Python floats, including
-infinity, as returned by the JSON5 parser. All formats must be UTF-8 without a
-byte-order mark (BOM); a BOM is a marked include parse error.
+infinity, as returned by the JSON5 parser. JSON-family document formats require UTF-8 without a
+byte-order mark (BOM); a BOM is a marked include parse error. `!include-raw` is the binary path.
 
 TOML dates and times stay as Python `date`, `time`, and `datetime` values.
 Includes in every format use the same root checks, cycle tracking, and byte and
@@ -118,26 +120,30 @@ available under the returned `DEFAULT` key and inherited by each named section.
 Dotenv values also remain strings; the parser never reads or changes process
 environment variables and never expands `${...}` or runs shell syntax. Use
 `!include-text` for Markdown, templates, scripts, or other files whose contents
-should remain exact text, including whitespace and line endings. The
-[worked examples](docs/examples.md#ini-dotenv-and-text-includes) show these forms.
+should remain exact text, including whitespace and line endings. Use `!include-raw` for exact
+bytes, such as binary payloads. The [worked examples](docs/examples.md#ini-dotenv-and-text-includes)
+show these forms.
 
 The runnable [`include_formats.yaml`](examples/include_formats.yaml) example combines
 a JSON defaults object, a TOML database table, and a JSON list spread. Its exact
 result is checked by [`tests/test_examples.py`](tests/test_examples.py); the
 [worked guide](docs/examples.md#include-json-and-toml-sources) shows each source.
 
-## Include CSV rows
+## Include CSV tables
 
-CSV defaults to a list of rows, with every cell kept as a string and the first row
-included as data. It never guesses whether the file has headers. To get a list of
-dictionaries, configure a loader with `CsvAdapter(mode="dicts")`; that mode treats
-the first row as headers and rejects empty or duplicate names and rows with a
-different number of cells. Neither mode converts numbers or dates, and delimiter
-sniffing is disabled. Parsing follows Python's CSV reader rules rather than validating the
-full RFC 4180 grammar. The runtime's `csv.field_size_limit()` adds a per-field limit separate
-from include byte budgets; the adapter does not change that process-wide setting. See
-[CSV examples](docs/examples.md#csv-rows-and-header-records) and the
-[format guide](docs/formats.md#csv-rows-and-header-records) for details.
+Use `!include-table` to make the CSV interpretation explicit. The default `CsvAdapter()`
+returns row lists, keeps every cell as a string, and includes the first row as data. Configure
+`CsvAdapter(mode="dicts")` to use the first row as header names and return header-keyed records;
+or supply `headers=("id", "name")` to use explicit names and treat every CSV row as data. Empty
+and duplicate names and ragged records are rejected. Numeric conversion and delimiter sniffing
+are disabled. `!include` rejects `.csv` sources with a message directing callers to
+`!include-table`; CSV is not silently parsed as YAML. See [CSV examples](docs/examples.md#csv-rows-and-header-records)
+and the [format guide](docs/formats.md#csv-rows-and-header-records) for details.
+
+`!include-text` returns strictly decoded UTF-8 while preserving whitespace and line endings.
+`!include-raw` returns the exact source bytes, including non-UTF-8 and NUL bytes. Both use the
+same resolver and include budgets. Raw byte values require explicit conversion before JSON
+serialization.
 
 ## Composition that reads like YAML
 
@@ -382,7 +388,7 @@ By default, the top-level file's directory and configured search paths define th
 roots. You can supply `allowed_roots` explicitly when a configuration needs access to a
 broader or different directory layout.
 
-An allowed root is required only when `!include` is used. Streams containing only
+An allowed root is required when an include tag is used. Streams containing only
 anchors, mapping overlays, and list spreads work without search paths or roots.
 An include without an allowed root raises a YAML error at the tag before its resolver is called.
 
@@ -450,9 +456,10 @@ tags.
 
 By default, parsing uses PyYAML's `SafeLoader`.
 
-Included `.json`, `.jsonc`, `.json5`, `.jsonl`, `.ndjson`, `.csv`, `.toml`, `.ini`,
-`.dotenv`, and `.env` files use their built-in adapters. `!include-text` loads a source
-as an exact UTF-8 string without format parsing.
+Included `.json`, `.jsonc`, `.json5`, `.jsonl`, `.ndjson`, `.toml`, `.ini`, `.dotenv`,
+and `.env` files use their built-in adapters. CSV is selected explicitly with `!include-table`.
+`!include-text` loads a source as an exact UTF-8 string, while
+`!include-raw` returns the exact original bytes without decoding or format parsing.
 YAML still owns composition: merge, delete, replace, and spread operators are expressed in
 the including YAML document. You can register a parser for another included-file suffix on a
 `FormatRegistry` and pass that registry to `YamlConfigLoader` or any loading function. See
@@ -460,7 +467,7 @@ the [format adapter guide](docs/formats.md) for a short example and the adapter 
 
 Default calls use the public `YamlType` result alias, which includes the native scalar values
 from the built-in YAML, JSON-family, TOML, CSV, INI, and dotenv parsers, including TOML dates
-and times. Supplying a
+and times. `!include-raw` also returns bytes. Supplying a
 custom `FormatRegistry` or `yaml_loader` broadens the result to `object`, since those trusted
 extensions can return arbitrary Python values. Narrow or validate that result against your
 application's schema before accessing fields.

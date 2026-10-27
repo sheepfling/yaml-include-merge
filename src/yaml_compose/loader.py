@@ -1,8 +1,8 @@
 """Safe YAML construction with bounded includes and local mapping overlays.
 
 Use ``load_yaml_file`` or ``YamlConfigLoader`` for ordinary application code.
-``load_yaml_dispatch`` accepts a text stream and enables ``!include`` when its
-header selects ``%LOADER YamlCompose``. The constructors retain PyYAML source
+``load_yaml_dispatch`` accepts a text stream and enables the package's include
+tags when its header selects ``%LOADER YamlCompose``. The constructors retain PyYAML source
 marks so include and mapping errors identify the relevant YAML location.
 """
 
@@ -64,6 +64,8 @@ from .tags import (
     COMPOSE_LOADER_TAG,
     DEEP_MERGE_KEY,
     DELETE_TAG,
+    INCLUDE_RAW_TAG,
+    INCLUDE_TABLE_TAG,
     INCLUDE_TAG,
     INCLUDE_TEXT_TAG,
     LOADER_DIRECTIVE,
@@ -349,6 +351,14 @@ class IncludeLoader(SafeLoader):
         return loader._include(node)
 
     @staticmethod
+    def _construct_include_table(loader: IncludeLoader, node: Node) -> object:
+        return loader._include(node, table=True)
+
+    @staticmethod
+    def _construct_include_raw(loader: IncludeLoader, node: Node) -> bytes:
+        return loader._include_raw(node)
+
+    @staticmethod
     def _construct_include_text(loader: IncludeLoader, node: Node) -> str:
         return loader._include_text(node)
 
@@ -533,15 +543,35 @@ class IncludeLoader(SafeLoader):
                 tag=INCLUDE_TEXT_TAG,
             )
 
-    def _include(self, node: Node) -> object:
-        resolved, include_source, source_label = self._resolve_include_source(node, tag=INCLUDE_TAG)
+    def _include_raw(self, node: Node) -> bytes:
+        """Include a bounded source as its exact original bytes."""
+        resolved, _include_source, source_label = self._resolve_include_source(node, tag=INCLUDE_RAW_TAG)
+        return self._read_include_source(node, resolved, source_label, tag=INCLUDE_RAW_TAG)
+
+    def _include(self, node: Node, *, table: bool = False) -> object:
+        """Load a structured include, or an explicitly marked CSV table."""
+        tag = INCLUDE_TABLE_TAG if table else INCLUDE_TAG
+        resolved, include_source, source_label = self._resolve_include_source(node, tag=tag)
         try:
             selection = self.format_registry.select_format(include_source, format_id=resolved.format_id)
         except UnknownFormatError as exc:
-            _include_error(node, str(exc), exc)
+            _include_error(node, str(exc), exc, tag=tag)
         descriptor = selection.descriptor
         adapter = selection.adapter
-        content = self._read_include_source(node, resolved, source_label, tag=INCLUDE_TAG)
+        if table:
+            if descriptor.format_id != "csv" or descriptor.capability != "records" or adapter is None:
+                _include_error(
+                    node,
+                    f"{INCLUDE_TABLE_TAG} requires a CSV table source; resolved as {descriptor.format_id!r}",
+                    tag=tag,
+                )
+        elif descriptor.format_id == "csv":
+            _include_error(
+                node,
+                f"CSV sources require {INCLUDE_TABLE_TAG}; {INCLUDE_TAG} is for structured document includes",
+                tag=tag,
+            )
+        content = self._read_include_source(node, resolved, source_label, tag=tag)
         try:
             if adapter is not None:
                 format_input = FormatInput(include_source, source_label, content)
@@ -552,6 +582,7 @@ class IncludeLoader(SafeLoader):
                         source_label,
                         cast(RecordFormatAdapter, adapter),
                         format_input,
+                        tag=tag,
                     )
                 try:
                     return cast(FormatAdapter, adapter).parse(format_input)
@@ -560,12 +591,14 @@ class IncludeLoader(SafeLoader):
                         node,
                         f"cannot parse {descriptor.format_id.upper()} include source {source_label}: {exc}",
                         exc,
+                        tag=tag,
                     )
                 except FormatParseError as exc:
                     _include_error(
                         node,
                         f"invalid {descriptor.format_id.upper()} include source {source_label}: {exc}",
                         exc,
+                        tag=tag,
                     )
             try:
                 text = content.decode("utf-8")
@@ -574,6 +607,7 @@ class IncludeLoader(SafeLoader):
                     node,
                     f"include source {_include_source_label(include_source)} is not UTF-8 text",
                     exc,
+                    tag=tag,
                 )
             if self.recursive_dispatch:
                 self.budget.current_depth += 1
@@ -608,6 +642,7 @@ class IncludeLoader(SafeLoader):
                 node,
                 f"cannot read include source {_include_source_label(include_source)}: {exc}",
                 exc,
+                tag=tag,
             )
 
     @staticmethod
@@ -617,6 +652,8 @@ class IncludeLoader(SafeLoader):
         source_label: str,
         adapter: RecordFormatAdapter,
         format_input: FormatInput,
+        *,
+        tag: str = INCLUDE_TAG,
     ) -> list[object]:
         """Eagerly consume and close one bounded record iterator under include context."""
         try:
@@ -626,6 +663,7 @@ class IncludeLoader(SafeLoader):
                 node,
                 f"record adapter for {format_id.upper()} failed for include source {source_label}: {exc}",
                 exc,
+                tag=tag,
             )
 
         records: list[object] = []
@@ -651,7 +689,7 @@ class IncludeLoader(SafeLoader):
                 message = f"invalid {format_id.upper()} include source {source_label}: {failure}"
             else:
                 message = f"record adapter for {format_id.upper()} failed for include source {source_label}: {failure}"
-            _include_error(node, message, failure)
+            _include_error(node, message, failure, tag=tag)
         return records
 
     def construct_mapping(self, node: MappingNode, deep: bool = False) -> YamlDict:
@@ -753,6 +791,14 @@ class IncludeLoader(SafeLoader):
 IncludeLoader.add_constructor(
     INCLUDE_TAG,
     IncludeLoader._construct_include,  # pyright: ignore[reportPrivateUsage]
+)
+IncludeLoader.add_constructor(
+    INCLUDE_TABLE_TAG,
+    IncludeLoader._construct_include_table,  # pyright: ignore[reportPrivateUsage]
+)
+IncludeLoader.add_constructor(
+    INCLUDE_RAW_TAG,
+    IncludeLoader._construct_include_raw,  # pyright: ignore[reportPrivateUsage]
 )
 IncludeLoader.add_constructor(
     INCLUDE_TEXT_TAG,
@@ -910,7 +956,7 @@ def load_yaml_dispatch(
     ``FileSource`` or ``MemorySource``. Pass at most one. The source directory
     and ``search_paths`` form the default allowed roots; explicit
     ``allowed_roots`` replace that default. A stream with includes needs at
-    least one allowed root. The root requirement is checked at each ``!include``
+    least one allowed root. The root requirement is checked at every include tag
     before calling its resolver; a missing root raises a marked YAML error.
     Streams using only anchors, mapping overlays, and list spreads need no roots
     or search paths. ``load_stack`` seeds cycle and depth tracking.
@@ -1108,7 +1154,7 @@ def load_yaml_compose(
     The stream, roots, resolver, and limits have the same meaning as in
     ``load_yaml_dispatch``. This function selects ``COMPOSE_LOADER_TAG`` even if the
     document has no ``%LOADER`` directive. Roots and search paths are unnecessary
-    for local mapping overlays and list spreads; ``!include`` requires an allowed root.
+    for local mapping overlays and list spreads; include tags require an allowed root.
     """
     return load_yaml_dispatch(
         stream,
@@ -1354,8 +1400,9 @@ class YamlConfigLoader(Generic[_LoaderValue_co]):
         ``format_registry`` is copied into a read-only snapshot. Its adapters
         are shared by reference and must be stateless and safe for concurrent
         calls. The default registry contains YAML, JSON-family, TOML, CSV, INI,
-        and dotenv adapters. `!include-text` uses the same resolver and budgets
-        without parsing the selected source format.
+        and dotenv adapters. CSV is selected with ``!include-table``. The
+        ``!include-text`` and ``!include-raw`` tags use the same resolver and
+        budgets without parsing the selected source format.
         """
         validate_yaml_loader(yaml_loader)
         self.include_resolver = include_resolver

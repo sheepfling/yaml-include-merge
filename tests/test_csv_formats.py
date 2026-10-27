@@ -1,4 +1,4 @@
-"""CSV includes use an explicit row shape through the shared adapter registry."""
+"""CSV table includes use an explicit row shape through the shared adapter registry."""
 
 from __future__ import annotations
 
@@ -35,15 +35,51 @@ def _dict_registry() -> FormatRegistry:
     return registry
 
 
-def test_csv_is_a_registered_record_format_with_row_lists_by_default(test_path: Path) -> None:
+def test_csv_table_uses_row_lists_by_default(test_path: Path) -> None:
     source = test_path / "rows.csv"
     source.write_text("id,enabled\n001,true\n", encoding="utf-8")
-    config = _config(test_path, "rows: !include rows.csv\n")
+    config = _config(test_path, "rows: !include-table rows.csv\n")
     descriptor = FormatRegistry().detect_format(FileSource(source))
 
     assert descriptor.format_id == "csv"
     assert descriptor.capability == "records"
     assert load_yaml_file(config) == {"rows": [["id", "enabled"], ["001", "true"]]}
+
+
+def test_ordinary_include_rejects_csv_with_a_table_tag_hint_and_does_not_open_it(test_path: Path) -> None:
+    source = test_path / "rows.csv"
+    source.write_text("one,two\n", encoding="utf-8")
+    config = _config(test_path, "rows: !include rows.csv\n")
+    opened = False
+
+    class Resolver:
+        def resolve(self, request: IncludeRequest) -> ResolvedInclude:
+            nonlocal opened
+
+            def open_binary() -> BytesIO:
+                nonlocal opened
+                opened = True
+                return BytesIO(source.read_bytes())
+
+            return ResolvedInclude(FileSource(source), open_binary)
+
+    with pytest.raises(ConstructorError, match=r"CSV sources require !include-table") as caught:
+        load_yaml_file(config, include_resolver=Resolver())
+
+    assert "while resolving !include" in str(caught.value)
+    assert caught.value.problem_mark is not None
+    assert not opened
+
+
+def test_include_table_rejects_a_non_csv_source(test_path: Path) -> None:
+    (test_path / "settings.yaml").write_text("value: 1\n", encoding="utf-8")
+    config = _config(test_path, "table: !include-table settings.yaml\n")
+
+    with pytest.raises(ConstructorError, match=r"!include-table requires a CSV table source") as caught:
+        load_yaml_file(config)
+
+    assert "while resolving !include-table" in str(caught.value)
+    assert caught.value.problem_mark is not None
 
 
 def test_csv_row_lists_preserve_quoting_newlines_unicode_and_strings(test_path: Path) -> None:
@@ -52,7 +88,9 @@ def test_csv_row_lists_preserve_quoting_newlines_unicode_and_strings(test_path: 
         'name,note,value\n"Ada","comma, stays",001\n"Zoë","first line\nsecond line",true\n',
         encoding="utf-8",
     )
-    config = _config(test_path, "rows: !include rows.csv\nitems: [before, !spread [!include rows.csv], after]\n")
+    config = _config(
+        test_path, "rows: !include-table rows.csv\nitems: [before, !spread [!include-table rows.csv], after]\n"
+    )
 
     rows = [
         ["name", "note", "value"],
@@ -68,7 +106,7 @@ def test_csv_row_lists_preserve_quoting_newlines_unicode_and_strings(test_path: 
 def test_csv_header_records_are_an_explicit_per_loader_mode(test_path: Path) -> None:
     source = test_path / "people.csv"
     source.write_text('name, note ,active\n"Ada Lovelace","hello, world",true\n', encoding="utf-8")
-    config = _config(test_path, "records: !include people.csv\n")
+    config = _config(test_path, "records: !include-table people.csv\n")
 
     assert load_yaml_file(config) == {
         "records": [["name", " note ", "active"], ["Ada Lovelace", "hello, world", "true"]]
@@ -78,11 +116,51 @@ def test_csv_header_records_are_an_explicit_per_loader_mode(test_path: Path) -> 
     }
 
 
+def test_csv_records_can_use_explicit_headers_instead_of_a_header_row(test_path: Path) -> None:
+    source = test_path / "headerless.csv"
+    source.write_text("001,Ada\n002,Grace\n", encoding="utf-8")
+    config = _config(test_path, "records: !include-table headerless.csv\n")
+    registry = FormatRegistry()
+    registry.register(CsvAdapter(mode="dicts", headers=("id", "name")), replace=True)
+
+    assert load_yaml_file(config, format_registry=registry) == {
+        "records": [{"id": "001", "name": "Ada"}, {"id": "002", "name": "Grace"}]
+    }
+
+
+def test_include_table_constructor_is_available_in_custom_safe_loader(test_path: Path) -> None:
+    source = test_path / "rows.csv"
+    source.write_text("id\n001\n", encoding="utf-8")
+    config = _config(test_path, "rows: !include-table rows.csv\n")
+
+    class CustomSafeLoader(yaml.SafeLoader):
+        pass
+
+    assert load_yaml_file(config, yaml_loader=CustomSafeLoader) == {"rows": [["id"], ["001"]]}
+
+
+@pytest.mark.parametrize(
+    ("mode", "headers", "message"),
+    [
+        ("rows", ("name",), "only be supplied in 'dicts' mode"),
+        ("dicts", (), "non-empty tuple"),
+        ("dicts", ("name", ""), "non-empty tuple"),
+        ("dicts", ("name", "name"), "unique"),
+        ("dicts", ["name"], "non-empty tuple"),
+    ],
+)
+def test_csv_explicit_headers_require_unique_nonempty_names_and_dicts_mode(
+    mode: str, headers: object, message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        CsvAdapter(mode=mode, headers=headers)  # type: ignore[arg-type]
+
+
 @pytest.mark.parametrize("mode", ["rows", "dicts"])
 def test_csv_empty_input_returns_no_records_and_header_only_returns_empty_data(test_path: Path, mode: str) -> None:
     (test_path / "empty.csv").write_bytes(b"")
     (test_path / "header.csv").write_text("name,value\n", encoding="utf-8")
-    config = _config(test_path, "empty: !include empty.csv\nheader: !include header.csv\n")
+    config = _config(test_path, "empty: !include-table empty.csv\nheader: !include-table header.csv\n")
     registry = FormatRegistry()
     if mode == "dicts":
         registry.register(CsvAdapter(mode="dicts"), replace=True)
@@ -94,7 +172,7 @@ def test_csv_empty_input_returns_no_records_and_header_only_returns_empty_data(t
 def test_csv_row_mode_preserves_blank_rows_and_uses_comma_without_sniffing(test_path: Path) -> None:
     source = test_path / "rows.csv"
     source.write_text("first;second\n\n3;4\n", encoding="utf-8")
-    config = _config(test_path, "rows: !include rows.csv\n")
+    config = _config(test_path, "rows: !include-table rows.csv\n")
 
     assert load_yaml_file(config) == {"rows": [["first;second"], [], ["3;4"]]}
 
@@ -112,7 +190,7 @@ def test_csv_dict_mode_rejects_empty_or_duplicate_headers_with_location(
 ) -> None:
     source = test_path / "bad.csv"
     source.write_text(contents, encoding="utf-8")
-    config = _config(test_path, "rows: !include bad.csv\n")
+    config = _config(test_path, "rows: !include-table bad.csv\n")
 
     with pytest.raises(ConstructorError, match=message) as caught:
         load_yaml_file(config, format_registry=_dict_registry())
@@ -133,7 +211,7 @@ def test_csv_dict_mode_rejects_empty_or_duplicate_headers_with_location(
 def test_csv_dict_mode_rejects_ragged_rows_with_physical_line(test_path: Path, contents: str, message: str) -> None:
     source = test_path / "ragged.csv"
     source.write_text(contents, encoding="utf-8")
-    config = _config(test_path, "rows: !include ragged.csv\n")
+    config = _config(test_path, "rows: !include-table ragged.csv\n")
 
     with pytest.raises(ConstructorError, match=message) as caught:
         load_yaml_file(config, format_registry=_dict_registry())
@@ -146,7 +224,7 @@ def test_csv_dict_mode_rejects_ragged_rows_with_physical_line(test_path: Path, c
 def test_csv_syntax_errors_report_physical_line_and_preserve_cause(test_path: Path) -> None:
     source = test_path / "malformed.csv"
     source.write_text('name,note\nAda,"unterminated\nfield', encoding="utf-8")
-    config = _config(test_path, "rows: !include malformed.csv\n")
+    config = _config(test_path, "rows: !include-table malformed.csv\n")
 
     with pytest.raises(ConstructorError, match=r"CSV parse error at line 3") as caught:
         load_yaml_file(config)
@@ -160,7 +238,7 @@ def test_csv_syntax_errors_report_physical_line_and_preserve_cause(test_path: Pa
 def test_csv_strict_reader_accepts_quote_inside_unquoted_field_as_stdlib_behavior(test_path: Path) -> None:
     source = test_path / "quote-in-unquoted.csv"
     source.write_text('left,right\na,b"c\n', encoding="utf-8")
-    config = _config(test_path, "rows: !include quote-in-unquoted.csv\n")
+    config = _config(test_path, "rows: !include-table quote-in-unquoted.csv\n")
 
     assert load_yaml_file(config) == {"rows": [["left", "right"], ["a", 'b"c']]}
 
@@ -168,7 +246,7 @@ def test_csv_strict_reader_accepts_quote_inside_unquoted_field_as_stdlib_behavio
 def test_csv_strict_reader_rejects_text_after_closing_quote(test_path: Path) -> None:
     source = test_path / "text-after-quote.csv"
     source.write_text('name,note\nAda,"closed"junk\n', encoding="utf-8")
-    config = _config(test_path, "rows: !include text-after-quote.csv\n")
+    config = _config(test_path, "rows: !include-table text-after-quote.csv\n")
 
     with pytest.raises(ConstructorError, match=r"CSV parse error at line 2") as caught:
         load_yaml_file(config)
@@ -187,7 +265,7 @@ def test_csv_field_limit_uses_decoded_characters_and_does_not_change_global_sett
     contents = (field + "\n").encode("utf-8")
     assert len(contents) > field_limit
     source.write_bytes(contents)
-    config = _config(test_path, "rows: !include unicode-field.csv\n")
+    config = _config(test_path, "rows: !include-table unicode-field.csv\n")
 
     result = load_yaml_file(
         config,
@@ -206,7 +284,7 @@ def test_csv_field_limit_rejects_one_over_runtime_limit_without_changing_it(test
     source = test_path / "oversized-field.csv"
     contents = ("x" * (field_limit + 1) + "\n").encode("ascii")
     source.write_bytes(contents)
-    config = _config(test_path, "rows: !include oversized-field.csv\n")
+    config = _config(test_path, "rows: !include-table oversized-field.csv\n")
 
     with pytest.raises(ConstructorError, match="field larger than field limit") as caught:
         load_yaml_file(
@@ -228,7 +306,7 @@ def test_concurrent_csv_loads_leave_runtime_field_limit_unchanged(test_path: Pat
         source_root = test_path / name
         source_root.mkdir()
         (source_root / f"{name}.csv").write_text(f"value\n{value}\n", encoding="utf-8")
-        configs.append(_config(source_root, f"rows: !include {name}.csv\n"))
+        configs.append(_config(source_root, f"rows: !include-table {name}.csv\n"))
 
     with ThreadPoolExecutor(max_workers=2) as executor:
         first, second = (future.result() for future in (executor.submit(load_yaml_file, config) for config in configs))
@@ -248,7 +326,7 @@ def test_concurrent_csv_loads_leave_runtime_field_limit_unchanged(test_path: Pat
 def test_csv_rejects_bom_and_invalid_utf8_with_source_context(test_path: Path, contents: bytes, message: str) -> None:
     source = test_path / "encoding.csv"
     source.write_bytes(contents)
-    config = _config(test_path, "rows: !include encoding.csv\n")
+    config = _config(test_path, "rows: !include-table encoding.csv\n")
 
     with pytest.raises(ConstructorError, match=message) as caught:
         load_yaml_file(config)
@@ -267,7 +345,7 @@ def test_csv_include_uses_resolved_source_and_shared_budgets_and_closes_stream(t
     actual = test_path / "actual.csv"
     contents = b"name,value\nAda,001\n"
     actual.write_bytes(contents)
-    config = _config(test_path, "rows: !include alias.csv\n")
+    config = _config(test_path, "rows: !include-table alias.csv\n")
     stream = BytesIO(contents)
 
     class RedirectResolver:
@@ -301,7 +379,7 @@ def test_csv_include_uses_resolved_source_and_shared_budgets_and_closes_stream(t
 
 def test_configured_loader_keeps_csv_modes_isolated(test_path: Path) -> None:
     (test_path / "people.csv").write_text("name\nAda\n", encoding="utf-8")
-    config = _config(test_path, "rows: !include people.csv\n")
+    config = _config(test_path, "rows: !include-table people.csv\n")
     rows = YamlConfigLoader()
     dicts = YamlConfigLoader(format_registry=_dict_registry())
 
