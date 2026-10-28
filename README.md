@@ -12,7 +12,7 @@ template language.
 
 - **`<<<`** recursively merges mappings, extending YAML's familiar `<<`.
 - **`!include`** brings another YAML, JSON-family, TOML, INI, or dotenv file into the document.
-- **`!include-table`** loads CSV as rows of strings.
+- **`!include-table`** loads CSV as row lists or header-keyed records.
 - **`!include-text`** loads a local UTF-8 file as an unparsed string.
 - **`!include-raw`** loads a local file as its exact bytes.
 - **`!delete`** removes a key during an overlay.
@@ -131,18 +131,14 @@ result is checked by [`tests/test_examples.py`](tests/test_examples.py); the
 
 ## Include CSV tables
 
-Use `!include-table` to read a CSV file as rows of strings; no Python configuration is needed.
-The first row is data, and every value such as `001`, `true`, or `3.5` stays text:
-
-```yaml
-%LOADER YamlCompose
----
-people: !include-table people.csv
-```
-
-CSV is not silently parsed by `!include`. The reader uses standard comma and quoting rules,
-without guessing headers, delimiters, or cell types. See [CSV examples](docs/examples.md#csv-tables)
-and the [format guide](docs/formats.md#csv-tables) for details.
+Use `!include-table` to make the CSV interpretation explicit. The default `CsvAdapter()`
+returns row lists, keeps every cell as a string, and includes the first row as data. Configure
+`CsvAdapter(mode="dicts")` to use the first row as header names and return header-keyed records;
+or supply `headers=("id", "name")` to use explicit names and treat every CSV row as data. Empty
+and duplicate names and ragged records are rejected. Numeric conversion and delimiter sniffing
+are disabled. `!include` rejects `.csv` sources with a message directing callers to
+`!include-table`; CSV is not silently parsed as YAML. See [CSV examples](docs/examples.md#csv-rows-and-header-records)
+and the [format guide](docs/formats.md#csv-rows-and-header-records) for details.
 
 `!include-text` returns strictly decoded UTF-8 while preserving whitespace and line endings.
 For a normal local binary file, just write `payload: !include-raw ./assets/payload.bin` in YAML;
