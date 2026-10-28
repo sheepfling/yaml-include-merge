@@ -465,13 +465,6 @@ class IncludeLoader(SafeLoader):
                 f"include source {source_label!r} is outside the allowed roots",
                 tag=tag,
             )
-        if include_source in self.load_stack:
-            _include_error(
-                node,
-                "include cycle detected: "
-                + " -> ".join(_include_source_label(item) for item in (*self.load_stack, include_source)),
-                tag=tag,
-            )
         if self.budget.max_include_depth is not None and self.budget.current_depth >= self.budget.max_include_depth:
             _include_error(
                 node,
@@ -487,6 +480,16 @@ class IncludeLoader(SafeLoader):
             )
 
         return resolved, include_source, source_label
+
+    def _check_recursive_yaml_cycle(self, node: Node, include_source: IncludeSource, *, tag: str) -> None:
+        """Reject a source already active on the recursive YAML parse stack."""
+        if include_source in self.load_stack:
+            _include_error(
+                node,
+                "include cycle detected: "
+                + " -> ".join(_include_source_label(item) for item in (*self.load_stack, include_source)),
+                tag=tag,
+            )
 
     def _read_include_source(self, node: Node, resolved: ResolvedInclude, source_label: str, *, tag: str) -> bytes:
         """Read and charge one source against the shared byte/file budgets."""
@@ -571,6 +574,8 @@ class IncludeLoader(SafeLoader):
                 f"CSV sources require {INCLUDE_TABLE_TAG}; {INCLUDE_TAG} is for structured document includes",
                 tag=tag,
             )
+        if adapter is None and self.recursive_dispatch:
+            self._check_recursive_yaml_cycle(node, include_source, tag=tag)
         content = self._read_include_source(node, resolved, source_label, tag=tag)
         try:
             if adapter is not None:

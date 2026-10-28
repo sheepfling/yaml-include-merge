@@ -46,6 +46,14 @@ def test_include_raw_constructor_is_available_in_custom_safe_loader(test_path: P
     assert load_yaml_file(config, yaml_loader=CustomSafeLoader) == {"payload": b"\x00\xff"}
 
 
+def test_include_raw_can_read_its_own_yaml_source_without_recursing(test_path: Path) -> None:
+    config = test_path / "main.yaml"
+    contents = b"%LOADER YamlCompose\n---\npayload: !include-raw main.yaml\n"
+    config.write_bytes(contents)
+
+    assert load_yaml_file(config) == {"payload": contents}
+
+
 def test_include_raw_custom_resolver_preserves_bytes_and_closes_stream() -> None:
     root = MemoryRoot("raw-test")
     payload = b"\x00\xffnot-utf8\x80\r\n"

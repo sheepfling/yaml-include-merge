@@ -46,6 +46,13 @@ def test_csv_table_uses_row_lists_by_default(test_path: Path) -> None:
     assert load_yaml_file(config) == {"rows": [["id", "enabled"], ["001", "true"]]}
 
 
+def test_include_table_can_read_its_own_source_without_recursing(test_path: Path) -> None:
+    source = test_path / "main.csv"
+    source.write_bytes(b"%LOADER YamlCompose\n---\nrows: !include-table main.csv\n")
+
+    assert load_yaml_file(source) == {"rows": [["%LOADER YamlCompose"], ["---"], ["rows: !include-table main.csv"]]}
+
+
 def test_ordinary_include_rejects_csv_with_a_table_tag_hint_and_does_not_open_it(test_path: Path) -> None:
     source = test_path / "rows.csv"
     source.write_text("one,two\n", encoding="utf-8")

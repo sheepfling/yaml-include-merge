@@ -54,6 +54,35 @@ def test_include_text_constructor_is_copied_to_custom_safe_loader(test_path: Pat
     assert load_yaml_file(config, yaml_loader=CustomSafeLoader) == {"template": "{{ value }}\n"}
 
 
+def test_include_text_can_read_its_own_yaml_source_without_recursing(test_path: Path) -> None:
+    config = test_path / "main.yaml"
+    contents = "%LOADER YamlCompose\n---\npayload: !include-text main.yaml\n"
+    config.write_bytes(contents.encode())
+
+    assert load_yaml_file(config) == {"payload": contents}
+
+
+def test_text_and_raw_can_read_an_ancestor_yaml_source_with_shared_budgets(test_path: Path) -> None:
+    parent = test_path / "main.yaml"
+    parent_text = "%LOADER YamlCompose\n---\nchild: !include child.yaml\n"
+    parent_bytes = parent_text.encode()
+    parent.write_bytes(parent_bytes)
+    child_text = "text: !include-text main.yaml\nraw: !include-raw main.yaml\n"
+    child_bytes = child_text.encode()
+    (test_path / "child.yaml").write_bytes(child_bytes)
+
+    assert load_yaml_file(
+        parent,
+        max_include_depth=2,
+        max_include_files=3,
+        max_file_bytes=max(len(parent_bytes), len(child_bytes)),
+        max_total_include_bytes=len(child_bytes) + 2 * len(parent_bytes),
+    ) == {"child": {"text": parent_text, "raw": parent_bytes}}
+
+    with pytest.raises(ConstructorError, match="maximum include count"):
+        load_yaml_file(parent, max_include_depth=2, max_include_files=2)
+
+
 def test_include_text_uses_shared_file_and_byte_budgets(test_path: Path) -> None:
     source = test_path / "message.txt"
     source.write_bytes(b"hello")
