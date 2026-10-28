@@ -27,8 +27,10 @@ from .limits import (
 )
 from .loader import (
     IncludeLoader,
+    IncludeRouteFrame,
     YamlConfigLoader,
     YamlIncludeError,
+    get_include_route,
     load_yaml_compose,
     load_yaml_dispatch,
     load_yaml_file,
@@ -94,6 +96,7 @@ __all__ = (
     "IncludeRequest",
     "IncludeResolver",
     "IncludeRoot",
+    "IncludeRouteFrame",
     "IncludeSearch",
     "IncludeSource",
     "IniAdapter",
@@ -109,6 +112,7 @@ __all__ = (
     "YamlIncludeError",
     "YamlType",
     "get_default_include_limits",
+    "get_include_route",
     "load_yaml_compose",
     "load_yaml_dispatch",
     "load_yaml_file",

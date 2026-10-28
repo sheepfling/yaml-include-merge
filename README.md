@@ -82,13 +82,15 @@ the composition layer, so included mappings can participate in the same merge op
 | Tag              | Input                                | Result                              |
 | ---------------- | ------------------------------------ | ----------------------------------- |
 | `!include`       | YAML, JSON-family, TOML, INI, dotenv | Native Python value                 |
-| `!include-table` | CSV                                  | Rows of strings; first row included |
+| `!include-table` | CSV or registered table adapter      | Rows of strings; first row included |
 | `!include-text`  | UTF-8 text                           | Exact decoded string                |
 | `!include-raw`   | Any file                             | Exact bytes                         |
 
 JSON5 is optional; install `yaml-compose[json5]` to use it. JSON Lines and NDJSON produce
 ordered lists of records. CSV needs no Python setup and does not infer headers or convert
-cell values. TOML date and time values remain Python `date`, `time`, or `datetime` objects.
+cell values. Custom table adapters, such as a caller-supplied TSV parser, can also use
+`!include-table`; no other table formats are guessed. TOML date and time values remain Python
+`date`, `time`, or `datetime` objects.
 Raw includes return bytes, which need explicit conversion before JSON serialization.
 
 For parser details and the format adapter API, see the [included formats guide](docs/formats.md).
@@ -113,6 +115,12 @@ Applications can supply an `IncludeResolver` for their own trusted sources; see 
 Loading returns values, not an editable YAML syntax tree: comments, formatting, and per-key
 source provenance are not retained. PyYAML's scalar resolution rules remain in effect, and
 explicit duplicate mapping keys are rejected.
+
+When a nested include fails, the original PyYAML exception type and leaf mark are preserved.
+The error prints the route from the root include site to the failing source. Call
+`get_include_route(error)` for a typed tuple of `IncludeRouteFrame` values; each frame has the
+including source, one-based line and column, tag, requested path, and resolved source when
+available.
 
 ## Explore
 

@@ -25,6 +25,7 @@ else:
 import yaml
 from yaml import MappingNode, Node, SafeLoader, ScalarNode, SequenceNode
 from yaml.constructor import ConstructorError
+from yaml.error import MarkedYAMLError
 from yaml.resolver import BaseResolver
 
 from ._overlays import DELETE as _DELETE
@@ -79,9 +80,11 @@ __all__ = (
     "DEFAULT_INCLUDE_LIMITS",
     "IncludeLimits",
     "IncludeLoader",
+    "IncludeRouteFrame",
     "YamlConfigLoader",
     "YamlDirective",
     "YamlIncludeError",
+    "get_include_route",
     "load_yaml_compose",
     "load_yaml_dispatch",
     "load_yaml_file",
@@ -112,6 +115,106 @@ class _StrippedLoaderDirective(NamedTuple):
 class _StreamIdentity(NamedTuple):
     path: Path | None
     display_name: str
+
+
+class IncludeRouteFrame(NamedTuple):
+    """One YAML include site on the route to a failed included source.
+
+    Lines and columns are one-based. ``resolved_source`` is ``None`` when
+    resolution failed before a canonical source identity was available.
+    """
+
+    including_source: str
+    line: int
+    column: int
+    tag: str
+    requested_path: str | None
+    resolved_source: str | None
+
+
+def _render_include_route(route: tuple[IncludeRouteFrame, ...]) -> str:
+    """Render a route once, from the root document toward the failure."""
+    lines = ["Include route (outermost first):"]
+    for frame in route:
+        requested = repr(frame.requested_path) if frame.requested_path is not None else "<invalid path>"
+        destination = f" -> {frame.resolved_source}" if frame.resolved_source is not None else ""
+        lines.append(f"  {frame.including_source}:{frame.line}:{frame.column} {frame.tag} {requested}{destination}")
+    return "\n".join(lines)
+
+
+def _is_route_prefix(
+    prefix: tuple[IncludeRouteFrame, ...],
+    route: tuple[IncludeRouteFrame, ...],
+) -> bool:
+    return len(prefix) <= len(route) and route[: len(prefix)] == prefix
+
+
+def get_include_route(error: BaseException) -> tuple[IncludeRouteFrame, ...]:
+    """Return the typed route attached to an include-related YAML error.
+
+    Non-include errors and errors raised by custom YAML exception subclasses
+    that cannot store attributes return an empty tuple; their rendered message
+    still includes the route when available.
+    """
+    route_value: object = getattr(error, "include_route", ())
+    route_candidates = cast(tuple[object, ...], route_value) if isinstance(route_value, tuple) else ()
+    if all(isinstance(frame, IncludeRouteFrame) for frame in route_candidates):
+        return cast(tuple[IncludeRouteFrame, ...], route_candidates)
+    return ()
+
+
+def _attach_include_route(
+    error: yaml.YAMLError,
+    route: tuple[IncludeRouteFrame, ...],
+) -> None:
+    """Attach structured route data without replacing the original YAML error."""
+    if not route:
+        return
+
+    previous = get_include_route(error)
+    if previous:
+        if _is_route_prefix(previous, route):
+            selected = route
+        elif _is_route_prefix(route, previous):
+            selected = previous
+        elif len(previous) == len(route) and all(
+            (old.including_source, old.line, old.column, old.tag, old.requested_path)
+            == (new.including_source, new.line, new.column, new.tag, new.requested_path)
+            for old, new in zip(previous, route, strict=True)
+        ):
+            selected = tuple(
+                old if old.resolved_source is not None else new for old, new in zip(previous, route, strict=True)
+            )
+        else:
+            selected = route
+    else:
+        selected = route
+
+    if selected == previous:
+        return
+
+    error_state_value: object = getattr(error, "__dict__", None)
+    error_state = cast(dict[str, object], error_state_value) if isinstance(error_state_value, dict) else None
+    base_message: object = error_state.get("_yaml_compose_base_message") if error_state is not None else None
+    if not isinstance(base_message, str):
+        if isinstance(error, MarkedYAMLError):
+            base_message = error.problem or error.context or str(error)
+        else:
+            base_message = str(error)
+        if error_state is not None:
+            error_state["_yaml_compose_base_message"] = base_message
+    if error_state is None and "Include route (outermost first):" in base_message:
+        return
+
+    rendered = f"{base_message}\n{_render_include_route(selected)}"
+    if isinstance(error, MarkedYAMLError):
+        # Keep the original PyYAML class and marks so existing exception
+        # handlers and source-location inspection continue to work.
+        error.problem = rendered
+    else:
+        error.args = (rendered,)
+    if error_state is not None:
+        error_state["include_route"] = selected
 
 
 @dataclass(slots=True)
@@ -330,6 +433,7 @@ class IncludeLoader(SafeLoader):
         format_registry: FormatRegistry | None = None,
         include_search: IncludeSearch = "local-first",
         allow_absolute_includes: bool = True,
+        include_route: tuple[IncludeRouteFrame, ...] = (),
     ) -> None:
         """Initialize one parse with its source, resolver, YAML loader, and budget."""
         super().__init__(stream)
@@ -343,6 +447,8 @@ class IncludeLoader(SafeLoader):
         self.format_registry = (format_registry if format_registry is not None else FormatRegistry()).snapshot()
         self.include_search: IncludeSearch = validate_include_search(include_search)
         self.allow_absolute_includes = bool(allow_absolute_includes)
+        self.include_route = include_route
+        self._include_routes_by_node: dict[Node, tuple[IncludeRouteFrame, ...]] = {}
         self.include_resolver = include_resolver or FileSystemIncludeResolver()
         self.source = source or (FileSource(current_file) if current_file is not None else None)
 
@@ -382,14 +488,20 @@ class IncludeLoader(SafeLoader):
                 f"{SPREAD_TAG} expects exactly one sequence source in brackets",
                 node.start_mark,
             )
-        source = _construct_object(loader, node.value[0])
+        source_node = node.value[0]
+        source = _construct_object(loader, source_node)
+        include_route = loader._include_routes_by_node.get(source_node)
+        if include_route is not None:
+            loader._include_routes_by_node[node] = include_route
         if not isinstance(source, list):
-            raise ConstructorError(
+            error = ConstructorError(
                 f"while constructing {SPREAD_TAG}",
                 None,
                 f"{SPREAD_TAG} source must be a sequence",
                 node.value[0].start_mark,
             )
+            loader._attach_node_include_route(error, node.value[0])
+            raise error
         return _SpreadMarker(cast(list[object], source))
 
     def _construct_replace(self, node: Node) -> _ReplaceMarker:
@@ -428,58 +540,131 @@ class IncludeLoader(SafeLoader):
                 result.append(value)
         return result
 
-    def _resolve_include_source(self, node: Node, *, tag: str) -> tuple[ResolvedInclude, IncludeSource, str]:
+    def _route_frame(self, node: Node, *, tag: str) -> IncludeRouteFrame:
+        """Describe an include site using the current YAML source and mark."""
+        if self.source is not None:
+            including_source = _include_source_label(self.source)
+        elif self.current_file is not None:
+            including_source = str(self.current_file)
+        else:
+            stream_name = getattr(self, "name", None)
+            including_source = stream_name if isinstance(stream_name, str) else "<yaml stream>"
+        requested_path = node.value if isinstance(node, ScalarNode) else None
+        return IncludeRouteFrame(
+            including_source=including_source,
+            line=node.start_mark.line + 1,
+            column=node.start_mark.column + 1,
+            tag=tag,
+            requested_path=requested_path,
+            resolved_source=None,
+        )
+
+    def _remember_include_result(
+        self,
+        node: Node,
+        value: object,
+        route: tuple[IncludeRouteFrame, ...],
+    ) -> object:
+        """Keep the originating include route for immediate YAML composition errors."""
+        self._include_routes_by_node[node] = route
+        return value
+
+    def _attach_node_include_route(self, error: yaml.YAMLError, node: Node) -> None:
+        route = self._include_routes_by_node.get(node)
+        if route is not None:
+            _attach_include_route(error, route)
+
+    def _include_routes_in_node_tree(self, node: Node) -> tuple[tuple[IncludeRouteFrame, ...], ...]:
+        """Collect distinct completed include routes inside one YAML node tree."""
+        routes: list[tuple[IncludeRouteFrame, ...]] = []
+        seen_nodes: set[int] = set()
+
+        def visit(current: Node) -> None:
+            if id(current) in seen_nodes:
+                return
+            seen_nodes.add(id(current))
+            route = self._include_routes_by_node.get(current)
+            if route is not None and route not in routes:
+                routes.append(route)
+            if isinstance(current, SequenceNode):
+                for child in current.value:
+                    visit(child)
+            elif isinstance(current, MappingNode):
+                for key_node, value_node in current.value:
+                    visit(key_node)
+                    visit(value_node)
+
+        visit(node)
+        return tuple(routes)
+
+    def _resolve_include_source(
+        self,
+        node: Node,
+        *,
+        tag: str,
+    ) -> tuple[ResolvedInclude, IncludeSource, str, IncludeRouteFrame]:
         """Resolve and validate one include source under the current loader context."""
-        if not isinstance(node, ScalarNode):
-            _include_error(node, f"{tag} expects a scalar path", tag=tag)
-        name = self.construct_scalar(node)
-        if not name:
-            _include_error(node, f"{tag} expects a non-empty path", tag=tag)
+        frame = self._route_frame(node, tag=tag)
+        route = (*self.include_route, frame)
         try:
-            validate_include_name(name, allow_absolute=self.allow_absolute_includes)
-        except ValueError as exc:
-            _include_error(node, str(exc), exc, tag=tag)
-        if not self.allowed_roots:
-            _include_error(node, f"{tag} requires at least one allowed root", tag=tag)
-        try:
-            resolved = self.include_resolver.resolve(
-                IncludeRequest(
-                    name=name,
-                    including=self.source,
-                    include_search=self.include_search,
-                    search_paths=self.search_paths,
-                    allowed_roots=self.allowed_roots,
+            if not isinstance(node, ScalarNode):
+                _include_error(node, f"{tag} expects a scalar path", tag=tag)
+            name = self.construct_scalar(node)
+            if not name:
+                _include_error(node, f"{tag} expects a non-empty path", tag=tag)
+            try:
+                validate_include_name(name, allow_absolute=self.allow_absolute_includes)
+            except ValueError as exc:
+                _include_error(node, str(exc), exc, tag=tag)
+            if not self.allowed_roots:
+                _include_error(node, f"{tag} requires at least one allowed root", tag=tag)
+            try:
+                resolved = self.include_resolver.resolve(
+                    IncludeRequest(
+                        name=name,
+                        including=self.source,
+                        include_search=self.include_search,
+                        search_paths=self.search_paths,
+                        allowed_roots=self.allowed_roots,
+                    )
                 )
-            )
-        except (OSError, ValueError) as exc:
-            _include_error(node, str(exc), exc, tag=tag)
+            except (OSError, ValueError) as exc:
+                _include_error(node, str(exc), exc, tag=tag)
 
-        try:
-            include_source = _canonical_source(resolved.source)
-        except (OSError, RuntimeError, ValueError, TypeError) as exc:
-            _include_error(node, f"resolver returned an invalid source: {exc}", exc, tag=tag)
-        source_label = _include_source_label(include_source)
-        if not _source_is_within_roots(include_source, self.allowed_roots):
-            _include_error(
-                node,
-                f"include source {source_label!r} is outside the allowed roots",
-                tag=tag,
-            )
-        if self.budget.max_include_depth is not None and self.budget.current_depth >= self.budget.max_include_depth:
-            _include_error(
-                node,
-                f"maximum include depth ({self.budget.max_include_depth}) exceeded",
-                tag=tag,
-            )
+            try:
+                include_source = _canonical_source(resolved.source)
+            except (OSError, RuntimeError, ValueError, TypeError) as exc:
+                _include_error(node, f"resolver returned an invalid source: {exc}", exc, tag=tag)
+            source_label = _include_source_label(include_source)
+            frame = frame._replace(resolved_source=source_label)
+            route = (*self.include_route, frame)
+            if not _source_is_within_roots(include_source, self.allowed_roots):
+                _include_error(
+                    node,
+                    f"include source {source_label!r} is outside the allowed roots",
+                    tag=tag,
+                )
+            if self.budget.max_include_depth is not None and self.budget.current_depth >= self.budget.max_include_depth:
+                _include_error(
+                    node,
+                    f"maximum include depth ({self.budget.max_include_depth}) exceeded",
+                    tag=tag,
+                )
 
-        if self.budget.max_include_files is not None and self.budget.include_files + 1 > self.budget.max_include_files:
-            _include_error(
-                node,
-                f"maximum include count ({self.budget.max_include_files}) exceeded",
-                tag=tag,
-            )
+            if (
+                self.budget.max_include_files is not None
+                and self.budget.include_files + 1 > self.budget.max_include_files
+            ):
+                _include_error(
+                    node,
+                    f"maximum include count ({self.budget.max_include_files}) exceeded",
+                    tag=tag,
+                )
 
-        return resolved, include_source, source_label
+            return resolved, include_source, source_label, frame
+        except yaml.YAMLError as exc:
+            _attach_include_route(exc, route)
+            raise
 
     def _check_recursive_yaml_cycle(self, node: Node, include_source: IncludeSource, *, tag: str) -> None:
         """Reject a source already active on the recursive YAML parse stack."""
@@ -534,63 +719,95 @@ class IncludeLoader(SafeLoader):
 
     def _include_text(self, node: Node) -> str:
         """Include a bounded source as exact, strictly decoded UTF-8 text."""
-        resolved, _include_source, source_label = self._resolve_include_source(node, tag=INCLUDE_TEXT_TAG)
-        content = self._read_include_source(node, resolved, source_label, tag=INCLUDE_TEXT_TAG)
+        frame = self._route_frame(node, tag=INCLUDE_TEXT_TAG)
+        route = (*self.include_route, frame)
         try:
-            return content.decode("utf-8")
-        except UnicodeDecodeError as exc:
-            _include_error(
+            resolved, _include_source, source_label, frame = self._resolve_include_source(
                 node,
-                f"include source {source_label} is not UTF-8 text",
-                exc,
                 tag=INCLUDE_TEXT_TAG,
             )
+            route = (*self.include_route, frame)
+            content = self._read_include_source(node, resolved, source_label, tag=INCLUDE_TEXT_TAG)
+            return cast(str, self._remember_include_result(node, content.decode("utf-8"), route))
+        except UnicodeDecodeError as exc:
+            try:
+                _include_error(
+                    node,
+                    f"include source {frame.resolved_source or frame.requested_path or '<unknown>'} is not UTF-8 text",
+                    exc,
+                    tag=INCLUDE_TEXT_TAG,
+                )
+            except yaml.YAMLError as yaml_error:
+                _attach_include_route(yaml_error, route)
+                raise
+        except yaml.YAMLError as exc:
+            _attach_include_route(exc, route)
+            raise
 
     def _include_raw(self, node: Node) -> bytes:
         """Include a bounded source as its exact original bytes."""
-        resolved, _include_source, source_label = self._resolve_include_source(node, tag=INCLUDE_RAW_TAG)
-        return self._read_include_source(node, resolved, source_label, tag=INCLUDE_RAW_TAG)
+        frame = self._route_frame(node, tag=INCLUDE_RAW_TAG)
+        route = (*self.include_route, frame)
+        try:
+            resolved, _include_source, source_label, frame = self._resolve_include_source(node, tag=INCLUDE_RAW_TAG)
+            route = (*self.include_route, frame)
+            content = self._read_include_source(node, resolved, source_label, tag=INCLUDE_RAW_TAG)
+            return cast(bytes, self._remember_include_result(node, content, route))
+        except yaml.YAMLError as exc:
+            _attach_include_route(exc, route)
+            raise
 
     def _include(self, node: Node, *, table: bool = False) -> object:
         """Load a structured include, or an explicitly marked CSV table."""
         tag = INCLUDE_TABLE_TAG if table else INCLUDE_TAG
-        resolved, include_source, source_label = self._resolve_include_source(node, tag=tag)
+        frame = self._route_frame(node, tag=tag)
+        route = (*self.include_route, frame)
         try:
-            selection = self.format_registry.select_format(include_source, format_id=resolved.format_id)
-        except UnknownFormatError as exc:
-            _include_error(node, str(exc), exc, tag=tag)
-        descriptor = selection.descriptor
-        adapter = selection.adapter
-        if table:
-            if descriptor.format_id != "csv" or descriptor.capability != "records" or adapter is None:
-                _include_error(
-                    node,
-                    f"{INCLUDE_TABLE_TAG} requires a CSV table source; resolved as {descriptor.format_id!r}",
-                    tag=tag,
-                )
-        elif descriptor.format_id == "csv":
-            _include_error(
-                node,
-                f"CSV sources require {INCLUDE_TABLE_TAG}; {INCLUDE_TAG} is for structured document includes",
-                tag=tag,
-            )
-        if adapter is None and self.recursive_dispatch:
-            self._check_recursive_yaml_cycle(node, include_source, tag=tag)
-        content = self._read_include_source(node, resolved, source_label, tag=tag)
-        try:
-            if adapter is not None:
-                format_input = FormatInput(include_source, source_label, content)
-                if descriptor.capability == "records":
-                    return self._collect_records(
+            resolved, include_source, source_label, frame = self._resolve_include_source(node, tag=tag)
+            route = (*self.include_route, frame)
+            try:
+                selection = self.format_registry.select_format(include_source, format_id=resolved.format_id)
+            except UnknownFormatError as exc:
+                _include_error(node, str(exc), exc, tag=tag)
+            descriptor = selection.descriptor
+            adapter = selection.adapter
+            if table:
+                if descriptor.capability != "table" or adapter is None:
+                    _include_error(
                         node,
-                        descriptor.format_id,
-                        source_label,
-                        cast(RecordFormatAdapter, adapter),
-                        format_input,
+                        f"{INCLUDE_TABLE_TAG} requires a registered table source; resolved as {descriptor.format_id!r}",
                         tag=tag,
                     )
+            elif descriptor.capability == "table":
+                _include_error(
+                    node,
+                    f"table sources require {INCLUDE_TABLE_TAG}; {INCLUDE_TAG} is for structured document includes",
+                    tag=tag,
+                )
+            if adapter is None and self.recursive_dispatch:
+                self._check_recursive_yaml_cycle(node, include_source, tag=tag)
+            content = self._read_include_source(node, resolved, source_label, tag=tag)
+            if adapter is not None:
+                format_input = FormatInput(include_source, source_label, content)
+                if descriptor.capability in ("records", "table"):
+                    return self._remember_include_result(
+                        node,
+                        self._collect_records(
+                            node,
+                            descriptor.format_id,
+                            source_label,
+                            cast(RecordFormatAdapter, adapter),
+                            format_input,
+                            tag=tag,
+                        ),
+                        route,
+                    )
                 try:
-                    return cast(FormatAdapter, adapter).parse(format_input)
+                    return self._remember_include_result(
+                        node,
+                        cast(FormatAdapter, adapter).parse(format_input),
+                        route,
+                    )
                 except FormatDependencyError as exc:
                     _include_error(
                         node,
@@ -618,37 +835,51 @@ class IncludeLoader(SafeLoader):
                 self.budget.current_depth += 1
                 try:
                     included_text, _ = _strip_loader_directive(text)
-                    return _load_composed_text(
-                        included_text,
-                        source_label,
-                        include_source,
-                        self.search_paths,
-                        self.allowed_roots,
-                        recursive_dispatch=self.recursive_dispatch,
-                        load_stack=(*self.load_stack, include_source),
-                        budget=self.budget,
-                        include_resolver=self.include_resolver,
-                        yaml_loader=self.yaml_loader,
-                        format_registry=self.format_registry,
-                        include_search=self.include_search,
-                        allow_absolute_includes=self.allow_absolute_includes,
+                    return self._remember_include_result(
+                        node,
+                        _load_composed_text(
+                            included_text,
+                            source_label,
+                            include_source,
+                            self.search_paths,
+                            self.allowed_roots,
+                            recursive_dispatch=self.recursive_dispatch,
+                            load_stack=(*self.load_stack, include_source),
+                            budget=self.budget,
+                            include_resolver=self.include_resolver,
+                            yaml_loader=self.yaml_loader,
+                            format_registry=self.format_registry,
+                            include_search=self.include_search,
+                            allow_absolute_includes=self.allow_absolute_includes,
+                            include_route=route,
+                        ),
+                        route,
                     )
                 finally:
                     self.budget.current_depth -= 1
             ordinary_text, _ = _strip_loader_directive(text)
-            return yaml.load(
-                _NamedStringIO(ordinary_text, source_label),
-                Loader=cast(type[SafeLoader], ordinary_loader(self.yaml_loader)),
+            return self._remember_include_result(
+                node,
+                yaml.load(
+                    _NamedStringIO(ordinary_text, source_label),
+                    Loader=cast(type[SafeLoader], ordinary_loader(self.yaml_loader)),
+                ),
+                route,
             )
-        except yaml.YAMLError:
+        except yaml.YAMLError as exc:
+            _attach_include_route(exc, route)
             raise
         except (OSError, TypeError, ValueError) as exc:
-            _include_error(
-                node,
-                f"cannot read include source {_include_source_label(include_source)}: {exc}",
-                exc,
-                tag=tag,
-            )
+            try:
+                _include_error(
+                    node,
+                    f"cannot read include source {frame.resolved_source or frame.requested_path}: {exc}",
+                    exc,
+                    tag=tag,
+                )
+            except yaml.YAMLError as yaml_error:
+                _attach_include_route(yaml_error, route)
+                raise
 
     @staticmethod
     def _collect_records(
@@ -688,12 +919,16 @@ class IncludeLoader(SafeLoader):
                         failure = exc
 
         if failure is not None:
+            adapter_kind = "table" if tag == INCLUDE_TABLE_TAG else "record"
             if isinstance(failure, FormatDependencyError):
                 message = f"cannot parse {format_id.upper()} include source {source_label}: {failure}"
             elif isinstance(failure, FormatParseError):
                 message = f"invalid {format_id.upper()} include source {source_label}: {failure}"
             else:
-                message = f"record adapter for {format_id.upper()} failed for include source {source_label}: {failure}"
+                message = (
+                    f"{adapter_kind} adapter for {format_id.upper()} failed for "
+                    f"include source {source_label}: {failure}"
+                )
             _include_error(node, message, failure, tag=tag)
         return records
 
@@ -710,6 +945,7 @@ class IncludeLoader(SafeLoader):
         seen: set[Hashable] = set()
         # opaque-boundary: Included mappings originate from PyYAML constructors.
         merge_sources: list[YamlDict] | None = None
+        merge_source_nodes: list[Node] = []
         merge_deep = False
 
         for key_node, value_node in node.value:
@@ -726,56 +962,77 @@ class IncludeLoader(SafeLoader):
                 merge_deep = is_deep
                 source_mappings: list[YamlDict] = []
                 source_nodes = value_node.value if isinstance(value_node, SequenceNode) else [value_node]
+                merge_source_nodes = list(source_nodes)
                 for source_node in source_nodes:
                     value = _construct_object(self, source_node)
                     if not isinstance(value, dict):
-                        raise ConstructorError(
+                        error = ConstructorError(
                             "while constructing a mapping overlay",
                             node.start_mark,
                             f"each source for {DEEP_MERGE_KEY if is_deep else MERGE_KEY} must be a mapping",
                             source_node.start_mark,
                         )
+                        self._attach_node_include_route(error, source_node)
+                        raise error
                     source_mappings.append(cast(YamlDict, value))
                 merge_sources = source_mappings
                 continue
 
             key = _construct_object(self, key_node)
             if key is _DELETE or isinstance(key, (_SpreadMarker, _ReplaceMarker)):
-                raise ConstructorError(
+                error = ConstructorError(
                     "while constructing a mapping",
                     node.start_mark,
                     f"{DELETE_TAG}, {REPLACE_TAG}, and {SPREAD_TAG} cannot be used as mapping keys",
                     key_node.start_mark,
                 )
+                self._attach_node_include_route(error, key_node)
+                raise error
             try:
                 hash(key)
             except TypeError as exc:
-                raise ConstructorError(
+                error = ConstructorError(
                     "while constructing a mapping",
                     node.start_mark,
                     f"found unhashable key {key!r}",
                     key_node.start_mark,
-                ) from exc
+                )
+                self._attach_node_include_route(error, key_node)
+                raise error from exc
             if key in seen:
-                raise ConstructorError(
+                error = ConstructorError(
                     "while constructing a mapping",
                     node.start_mark,
                     f"found duplicate key {key!r}",
                     key_node.start_mark,
                 )
+                self._attach_node_include_route(error, key_node)
+                raise error
             seen.add(key)
             value = _construct_object(self, value_node)
             if isinstance(value, _SpreadMarker):
-                raise YamlIncludeError(f"{SPREAD_TAG} is only valid as a list item")
+                error = YamlIncludeError(f"{SPREAD_TAG} is only valid as a list item")
+                self._attach_node_include_route(error, value_node)
+                raise error
             explicit[key] = value
 
         if merge_sources is None:
             return explicit
         base: YamlDict = {}
         # YAML merge sources are a priority list: earlier sources win.
-        for source in reversed(merge_sources):
-            base = _merge_mappings(base, source, deep=merge_deep)
-        return _merge_mappings(base, explicit, deep=merge_deep)
+        for source_node, source in reversed(tuple(zip(merge_source_nodes, merge_sources, strict=True))):
+            try:
+                base = _merge_mappings(base, source, deep=merge_deep)
+            except yaml.YAMLError as exc:
+                self._attach_node_include_route(exc, source_node)
+                raise
+        try:
+            return _merge_mappings(base, explicit, deep=merge_deep)
+        except yaml.YAMLError as exc:
+            routes = self._include_routes_in_node_tree(node)
+            if len(routes) == 1:
+                _attach_include_route(exc, routes[0])
+            raise
 
     @staticmethod
     def is_scalar_merge_node(node: Node) -> bool:
@@ -847,6 +1104,7 @@ def _load_composed_text(
     format_registry: FormatRegistry,
     include_search: IncludeSearch,
     allow_absolute_includes: bool,
+    include_route: tuple[IncludeRouteFrame, ...] = (),
 ) -> object:
     """Parse text with include behavior using already normalized filesystem state."""
     loader = configured_include_loader(yaml_loader, IncludeLoader)(
@@ -863,9 +1121,13 @@ def _load_composed_text(
         format_registry=format_registry,
         include_search=include_search,
         allow_absolute_includes=allow_absolute_includes,
+        include_route=include_route,
     )
     try:
         result = loader.get_single_data()
+    except yaml.YAMLError as exc:
+        _attach_include_route(exc, include_route)
+        raise
     finally:
         loader.dispose()  # pyright: ignore[reportUnknownMemberType]
     _assert_no_overlay_markers(result)
