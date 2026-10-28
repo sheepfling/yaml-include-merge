@@ -207,11 +207,10 @@ list of records is not a mapping merge source. Exact output is asserted by
 [`tests/test_examples.py`](../tests/test_examples.py); parser and failure cases
 are covered by [`tests/test_record_formats.py`](../tests/test_record_formats.py).
 
-### CSV rows and header records
+### CSV tables
 
-The runnable [`include_csv.py`](../examples/include_csv.py) example loads the same
-`people.csv` through the default row-list adapter and an explicitly configured
-header-record adapter. The YAML include is:
+Use `!include-table` for a CSV file. The default filesystem resolver opens the file;
+no Python setup is required:
 
 ```yaml
 %LOADER YamlCompose
@@ -219,29 +218,19 @@ header-record adapter. The YAML include is:
 people: !include-table people.csv
 ```
 
-The default mode includes the header as a row and leaves every cell as text:
+The result is a list of rows. The first row is data, and values such as `001` and
+`true` stay strings:
 
 ```python
 [["name", "note"], ["Ada", "likes, commas"], ["Grace", "first line\nsecond line"]]
 ```
 
-Configuring `CsvAdapter(mode="dicts")` treats the first row as headers. Supplying
-`headers=("id", "name")` uses explicit names and treats every CSV row as data:
-
-```python
-[
-    {"name": "Ada", "note": "likes, commas"},
-    {"name": "Grace", "note": "first line\nsecond line"},
-]
-```
-
-The adapter does not guess headers or delimiters, normalize names, or convert values.
-Header mode rejects empty or duplicate names and ragged data rows. Parsing follows the
-standard-library CSV reader's rules, including its accepted quote-inside-unquoted-field
-behavior; `strict=True` does not mean full RFC 4180 validation. The running Python runtime's
-`csv.field_size_limit()` also imposes a per-field character limit, separate from include byte
-budgets. See the [format guide](formats.md#csv-rows-and-header-records) for details. CSV
-parsing and failure cases are covered by [`tests/test_csv_formats.py`](../tests/test_csv_formats.py).
+CSV parsing uses the standard-library reader's comma and quoting rules without header,
+delimiter, or value conversion heuristics. Empty input returns `[]`; blank lines become
+empty rows; varying row widths are preserved. `!include` rejects CSV files and points to
+`!include-table` instead. The runtime's `csv.field_size_limit()` adds a separate per-field
+limit. See the [format guide](formats.md#csv-tables) for details. CSV behavior is covered by
+[`tests/test_csv_formats.py`](../tests/test_csv_formats.py).
 
 ## INI, dotenv, and text includes
 

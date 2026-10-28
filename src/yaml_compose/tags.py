@@ -14,7 +14,7 @@ INCLUDE_TAG = "!include"
 """Tag that loads a structured YAML or registered-format document."""
 
 INCLUDE_TABLE_TAG = "!include-table"
-"""Tag that loads a tabular CSV source as rows or header-keyed records."""
+"""Tag that loads a CSV source as ordered rows of strings."""
 
 INCLUDE_RAW_TAG = "!include-raw"
 """Tag that includes the exact bounded bytes from a source."""

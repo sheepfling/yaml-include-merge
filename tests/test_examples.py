@@ -127,21 +127,13 @@ def test_record_formats_example_has_the_documented_result(examples_path: Path) -
     }
 
 
-def test_csv_example_shows_both_explicit_result_shapes() -> None:
+def test_csv_example_shows_simple_row_list_result() -> None:
     assert load_csv_example() == {
-        "rows": {
-            "people": [
-                ["name", "note"],
-                ["Ada", "likes, commas"],
-                ["Grace", "first line\nsecond line"],
-            ]
-        },
-        "records": {
-            "people": [
-                {"name": "Ada", "note": "likes, commas"},
-                {"name": "Grace", "note": "first line\nsecond line"},
-            ]
-        },
+        "people": [
+            ["name", "note"],
+            ["Ada", "likes, commas"],
+            ["Grace", "first line\nsecond line"],
+        ]
     }
 
 

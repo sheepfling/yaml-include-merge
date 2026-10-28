@@ -29,12 +29,6 @@ def _config(path: Path, body: str) -> Path:
     return config
 
 
-def _dict_registry() -> FormatRegistry:
-    registry = FormatRegistry()
-    registry.register(CsvAdapter(mode="dicts"), replace=True)
-    return registry
-
-
 def test_csv_table_uses_row_lists_by_default(test_path: Path) -> None:
     source = test_path / "rows.csv"
     source.write_text("id,enabled\n001,true\n", encoding="utf-8")
@@ -44,6 +38,9 @@ def test_csv_table_uses_row_lists_by_default(test_path: Path) -> None:
     assert descriptor.format_id == "csv"
     assert descriptor.capability == "records"
     assert load_yaml_file(config) == {"rows": [["id", "enabled"], ["001", "true"]]}
+    registry = FormatRegistry()
+    registry.register(CsvAdapter(), replace=True)
+    assert load_yaml_file(config, format_registry=registry) == {"rows": [["id", "enabled"], ["001", "true"]]}
 
 
 def test_include_table_can_read_its_own_source_without_recursing(test_path: Path) -> None:
@@ -115,28 +112,13 @@ def test_csv_preserves_crlf_inside_quoted_fields(test_path: Path) -> None:
     assert load_yaml_file(config) == {"rows": [["name", "note"], ["Grace", "first line\r\nsecond line"]]}
 
 
-def test_csv_header_records_are_an_explicit_per_loader_mode(test_path: Path) -> None:
+def test_csv_keeps_the_first_row_as_data_and_cells_as_strings(test_path: Path) -> None:
     source = test_path / "people.csv"
     source.write_text('name, note ,active\n"Ada Lovelace","hello, world",true\n', encoding="utf-8")
     config = _config(test_path, "records: !include-table people.csv\n")
 
     assert load_yaml_file(config) == {
         "records": [["name", " note ", "active"], ["Ada Lovelace", "hello, world", "true"]]
-    }
-    assert load_yaml_file(config, format_registry=_dict_registry()) == {
-        "records": [{"name": "Ada Lovelace", " note ": "hello, world", "active": "true"}]
-    }
-
-
-def test_csv_records_can_use_explicit_headers_instead_of_a_header_row(test_path: Path) -> None:
-    source = test_path / "headerless.csv"
-    source.write_text("001,Ada\n002,Grace\n", encoding="utf-8")
-    config = _config(test_path, "records: !include-table headerless.csv\n")
-    registry = FormatRegistry()
-    registry.register(CsvAdapter(mode="dicts", headers=("id", "name")), replace=True)
-
-    assert load_yaml_file(config, format_registry=registry) == {
-        "records": [{"id": "001", "name": "Ada"}, {"id": "002", "name": "Grace"}]
     }
 
 
@@ -151,37 +133,15 @@ def test_include_table_constructor_is_available_in_custom_safe_loader(test_path:
     assert load_yaml_file(config, yaml_loader=CustomSafeLoader) == {"rows": [["id"], ["001"]]}
 
 
-@pytest.mark.parametrize(
-    ("mode", "headers", "message"),
-    [
-        ("rows", ("name",), "only be supplied in 'dicts' mode"),
-        ("dicts", (), "non-empty tuple"),
-        ("dicts", ("name", ""), "non-empty tuple"),
-        ("dicts", ("name", "name"), "unique"),
-        ("dicts", ["name"], "non-empty tuple"),
-    ],
-)
-def test_csv_explicit_headers_require_unique_nonempty_names_and_dicts_mode(
-    mode: str, headers: object, message: str
-) -> None:
-    with pytest.raises(ValueError, match=message):
-        CsvAdapter(mode=mode, headers=headers)  # type: ignore[arg-type]
-
-
-@pytest.mark.parametrize("mode", ["rows", "dicts"])
-def test_csv_empty_input_returns_no_records_and_header_only_returns_empty_data(test_path: Path, mode: str) -> None:
+def test_csv_empty_input_returns_no_rows_and_header_only_is_data(test_path: Path) -> None:
     (test_path / "empty.csv").write_bytes(b"")
     (test_path / "header.csv").write_text("name,value\n", encoding="utf-8")
     config = _config(test_path, "empty: !include-table empty.csv\nheader: !include-table header.csv\n")
-    registry = FormatRegistry()
-    if mode == "dicts":
-        registry.register(CsvAdapter(mode="dicts"), replace=True)
 
-    expected_header = [] if mode == "dicts" else [["name", "value"]]
-    assert load_yaml_file(config, format_registry=registry) == {"empty": [], "header": expected_header}
+    assert load_yaml_file(config) == {"empty": [], "header": [["name", "value"]]}
 
 
-def test_csv_row_mode_preserves_blank_rows_and_uses_comma_without_sniffing(test_path: Path) -> None:
+def test_csv_preserves_blank_rows_and_uses_comma_without_sniffing(test_path: Path) -> None:
     source = test_path / "rows.csv"
     source.write_text("first;second\n\n3;4\n", encoding="utf-8")
     config = _config(test_path, "rows: !include-table rows.csv\n")
@@ -189,48 +149,12 @@ def test_csv_row_mode_preserves_blank_rows_and_uses_comma_without_sniffing(test_
     assert load_yaml_file(config) == {"rows": [["first;second"], [], ["3;4"]]}
 
 
-@pytest.mark.parametrize(
-    ("contents", "message"),
-    [
-        ("name,name\nAda,Lovelace\n", "CSV header at line 1, column 2 duplicates 'name'"),
-        ("name,,active\nAda,Byron,true\n", "CSV header at line 1, column 2 is empty"),
-        ("\nname\nAda\n", "CSV header row at line 1 is empty"),
-    ],
-)
-def test_csv_dict_mode_rejects_empty_or_duplicate_headers_with_location(
-    test_path: Path, contents: str, message: str
-) -> None:
-    source = test_path / "bad.csv"
-    source.write_text(contents, encoding="utf-8")
-    config = _config(test_path, "rows: !include-table bad.csv\n")
+def test_csv_keeps_ragged_rows_and_duplicate_or_empty_first_row_cells(test_path: Path) -> None:
+    source = test_path / "irregular.csv"
+    source.write_text(",name,name\nshort\nwide,with,extra\n", encoding="utf-8")
+    config = _config(test_path, "rows: !include-table irregular.csv\n")
 
-    with pytest.raises(ConstructorError, match=message) as caught:
-        load_yaml_file(config, format_registry=_dict_registry())
-
-    assert str(source) in str(caught.value)
-    assert caught.value.problem_mark is not None
-    assert isinstance(caught.value.__cause__, FormatParseError)
-
-
-@pytest.mark.parametrize(
-    ("contents", "message"),
-    [
-        ("id,name\n1\n", "CSV record ending at line 2 has 1 columns; expected 2"),
-        ("id,name\n1,Ada,extra\n", "CSV record ending at line 2 has 3 columns; expected 2"),
-        ('id,name\n1,"two\nlines",extra\n', "CSV record ending at line 3 has 3 columns; expected 2"),
-    ],
-)
-def test_csv_dict_mode_rejects_ragged_rows_with_physical_line(test_path: Path, contents: str, message: str) -> None:
-    source = test_path / "ragged.csv"
-    source.write_text(contents, encoding="utf-8")
-    config = _config(test_path, "rows: !include-table ragged.csv\n")
-
-    with pytest.raises(ConstructorError, match=message) as caught:
-        load_yaml_file(config, format_registry=_dict_registry())
-
-    assert str(source) in str(caught.value)
-    assert caught.value.problem_mark is not None
-    assert isinstance(caught.value.__cause__, FormatParseError)
+    assert load_yaml_file(config) == {"rows": [["", "name", "name"], ["short"], ["wide", "with", "extra"]]}
 
 
 def test_csv_syntax_errors_report_physical_line_and_preserve_cause(test_path: Path) -> None:
@@ -348,11 +272,6 @@ def test_csv_rejects_bom_and_invalid_utf8_with_source_context(test_path: Path, c
     assert isinstance(caught.value.__cause__, FormatParseError)
 
 
-def test_csv_mode_validation_is_explicit() -> None:
-    with pytest.raises(ValueError, match="CSV mode must be 'rows' or 'dicts'"):
-        CsvAdapter(mode="sniff")  # type: ignore[arg-type]
-
-
 def test_csv_include_uses_resolved_source_and_shared_budgets_and_closes_stream(test_path: Path) -> None:
     actual = test_path / "actual.csv"
     contents = b"name,value\nAda,001\n"
@@ -367,11 +286,10 @@ def test_csv_include_uses_resolved_source_and_shared_budgets_and_closes_stream(t
     assert load_yaml_file(
         config,
         include_resolver=RedirectResolver(),
-        format_registry=_dict_registry(),
         max_file_bytes=len(contents),
         max_total_include_bytes=len(contents),
         max_include_files=1,
-    ) == {"rows": [{"name": "Ada", "value": "001"}]}
+    ) == {"rows": [["name", "value"], ["Ada", "001"]]}
     assert stream.closed
 
     rejected_stream = BytesIO(contents)
@@ -389,11 +307,12 @@ def test_csv_include_uses_resolved_source_and_shared_budgets_and_closes_stream(t
     assert rejected_stream.closed
 
 
-def test_configured_loader_keeps_csv_modes_isolated(test_path: Path) -> None:
+def test_configured_loader_uses_the_same_simple_csv_row_shape(test_path: Path) -> None:
     (test_path / "people.csv").write_text("name\nAda\n", encoding="utf-8")
     config = _config(test_path, "rows: !include-table people.csv\n")
-    rows = YamlConfigLoader()
-    dicts = YamlConfigLoader(format_registry=_dict_registry())
+    default_loader = YamlConfigLoader()
+    configured_loader = YamlConfigLoader(format_registry=FormatRegistry())
 
-    assert rows.load_file(config) == {"rows": [["name"], ["Ada"]]}
-    assert dicts.load_file(config) == {"rows": [{"name": "Ada"}]}
+    expected = {"rows": [["name"], ["Ada"]]}
+    assert default_loader.load_file(config) == expected
+    assert configured_loader.load_file(config) == expected

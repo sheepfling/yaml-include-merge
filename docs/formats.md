@@ -70,7 +70,7 @@ therefore return a buffered list: a late record error fails the whole include an
 escapes. This is not constant-memory file streaming. YAML `!spread` can insert records into a
 sequence. A record list is not a mapping, so it cannot be used as a `<<` or `<<<` merge source.
 
-## CSV rows and header records
+## CSV tables
 
 The built-in `.csv` adapter is invoked with `!include-table`, not `!include`. Using `.csv` with
 ordinary `!include` is a marked error explaining the table tag requirement; the input is never
@@ -82,14 +82,8 @@ field or non-delimiter text after a closing quote raises a parse error. Input mu
 without a BOM. Every cell remains a string; values such as `001`, `true`, and `3.5` are not
 converted.
 
-The standard-library `csv.field_size_limit()` is an additional per-field parser limit. Its
-value comes from the running Python runtime and is not fixed by `yaml-compose`. On the tested
-CPython 3.10–3.14 runtimes, the reader applies it to decoded field characters (so a multibyte
-UTF-8 character counts as one field character), independently of the include byte budgets.
-The adapter does not read or change the process-wide setting; callers who change it affect
-other CSV readers in that process too.
-
-By default, CSV tables return a list of row lists and the first row is ordinary data:
+CSV tables return a list of row lists; the first row is ordinary data and each cell remains
+a string:
 
 ```yaml
 %LOADER YamlCompose
@@ -98,41 +92,20 @@ rows: !include-table people.csv
 steps: [prepare, !spread [!include-table people.csv]]
 ```
 
-To interpret the first row as headers and return dictionaries, replace the built-in adapter
-in that loader's registry:
+The Python CSV reader also applies its process-wide `csv.field_size_limit()` to each decoded
+field, separately from include byte budgets. `yaml-compose` does not change that setting.
 
-```python
-from yaml_compose import CsvAdapter, FormatRegistry, YamlConfigLoader
-
-formats = FormatRegistry()
-formats.register(CsvAdapter(mode="dicts"), replace=True)
-loader = YamlConfigLoader(format_registry=formats)
-```
-
-Alternatively, provide explicit header names. The first CSV row is then data:
-
-```python
-from yaml_compose import CsvAdapter, FormatRegistry, YamlConfigLoader
-
-formats = FormatRegistry()
-formats.register(CsvAdapter(mode="dicts", headers=("id", "name")), replace=True)
-loader = YamlConfigLoader(format_registry=formats)
-```
-
-Header names and cell values are kept exactly as parsed. Header mode rejects empty or
-duplicate header names and rejects each data row whose number of cells differs from the
-header. Row-list mode keeps varying row widths. A physically blank line is an empty row in
-row-list mode; in header mode it is an empty header or a ragged row. Empty input returns `[]`
-in either mode, and a header-only file returns `[]` records in header mode. Parser errors
-include the source and the physical line reported by the CSV reader. Both modes use the
-shared include resolver, confinement, cycle checks, and byte/file/depth budgets. Results are
-buffered lists, not streaming iterators.
+The include uses the ordinary filesystem resolver unless the caller supplies a custom
+resolver. It remains subject to the same root confinement and byte, file-count, and depth
+budgets as other includes. Results are buffered lists, not streaming iterators. Empty input
+returns `[]`; blank lines become empty rows, and rows may have different widths. Parsing
+errors include the source and physical line reported by the CSV reader.
 
 CSV dispatch through `!include` was part of an unpublished local prototype. This candidate
 requires `!include-table` so the table-shaped interpretation is visible in YAML.
 
-The runnable [`include_csv.py`](../examples/include_csv.py) example loads the same YAML
-include once in each mode; its exact result is checked by `tests/test_examples.py`.
+The runnable [`include_csv.py`](../examples/include_csv.py) example shows the complete basic
+workflow, and its exact result is checked by `tests/test_examples.py`.
 
 ## INI, dotenv, and text includes
 
