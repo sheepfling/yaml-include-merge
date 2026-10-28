@@ -74,7 +74,10 @@ sequence. A record list is not a mapping, so it cannot be used as a `<<` or `<<<
 
 The built-in `.csv` adapter is invoked with `!include-table`, not `!include`. Using `.csv` with
 ordinary `!include` is a marked error explaining the table tag requirement; the input is never
-silently interpreted as YAML. The adapter uses Python's standard-library `csv.reader` with its default
+silently interpreted as YAML. Other table-shaped sources, such as TSV, are not guessed or
+enabled by default. A caller can register a table adapter for a chosen suffix and use the same
+`!include-table` tag; this keeps the YAML syntax clear while letting the adapter define its
+delimiter and parsing rules. The built-in adapter uses Python's standard-library `csv.reader` with its default
 Excel-style comma and quoting rules, `strict=True`, and no dialect or header sniffing. This
 uses the standard-library parser's rules; it is not a full RFC 4180 validator. For example,
 a quote inside an unquoted field is accepted as a literal character, while an unclosed quoted
@@ -223,6 +226,34 @@ the YAML values take precedence. The result is:
 {"host": "localhost", "service": {"port": 8080}}
 ```
 
+An additional table adapter uses the same record iterator contract but declares
+`capability="table"`. Registering a TSV parser does not change the built-in `.csv` parser:
+
+```python
+import csv
+from collections.abc import Iterator
+from io import StringIO
+
+from yaml_compose import FormatDescriptor, FormatInput, FormatRegistry, YamlConfigLoader
+
+
+class TsvAdapter:
+    descriptor = FormatDescriptor("tsv", (".tsv",), capability="table")
+
+    def iter_records(self, source: FormatInput, /) -> Iterator[object]:
+        text = source.data.decode("utf-8")
+        with StringIO(text, newline="") as stream:
+            yield from csv.reader(stream, delimiter="\t", strict=True)
+
+
+formats = FormatRegistry()
+formats.register(TsvAdapter())
+loader = YamlConfigLoader(format_registry=formats)
+```
+
+Then `rows: !include-table people.tsv` selects that registered parser. Ordinary `!include`
+rejects table-capability formats.
+
 The example parser is intentionally small; production adapters should report expected
 input failures by raising `FormatParseError` with a useful message. The loader attaches the
 YAML include mark and preserves the exception chain.
@@ -234,6 +265,9 @@ YAML include mark and preserves the exception chain.
 - A record adapter implements `RecordFormatAdapter`, and its descriptor sets
   `capability="records"`; it supplies `iter_records(FormatInput) -> Iterator[object]` instead
   of `parse`. The registry checks that the declared capability has the matching method.
+- A table adapter uses the same bounded record iterator with `capability="table"`. It is
+  selected only by `!include-table`, keeping table parsing explicit and separate from ordinary
+  structured includes.
 - The host resolves and confines sources, checks cycles and include budgets, reads bounded
   bytes, and closes the stream before calling an adapter. `FormatInput` exposes those bytes,
   a canonical source identity, and a display name. It does not expose a file opener.
@@ -263,6 +297,14 @@ YAML include mark and preserves the exception chain.
   overload returning `YamlType` would be unsound. Omit the redundant argument to keep the
   default result type; validate custom-loader results before narrowing them in application
   code.
+
+The public `UNSET` object and `UnsetType` exist for advanced wrappers that must preserve the
+difference between an omitted option and an explicit `None`. Ordinary callers should omit the
+argument or pass its documented value; they do not need to import either name.
+
+The default `YamlType` does not include tuples. Built-in YAML loading with `SafeLoader` creates
+YAML sequences as lists. A custom constructor or format adapter can return tuples and other
+Python containers, so calls with custom loaders or registries are typed as `object`.
 
 Serializers and live file-stream APIs are not part of this adapter boundary. Record adapters
 iterate over already-owned bounded bytes; include loading still returns a complete Python list.

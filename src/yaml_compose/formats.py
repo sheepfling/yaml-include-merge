@@ -21,7 +21,7 @@ from typing import ClassVar, Literal, NoReturn, Protocol, cast
 from .resolver import IncludeSource
 
 _FORMAT_ID = re.compile(r"[a-z][a-z0-9_-]*\Z")
-FormatCapability = Literal["document", "records"]
+FormatCapability = Literal["document", "records", "table"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,8 +54,8 @@ class FormatDescriptor:
             raise ValueError("format filenames must be non-empty basenames")
         if len(set(filenames)) != len(filenames):
             raise ValueError("format filenames must be unique")
-        if self.capability not in ("document", "records"):
-            raise ValueError("format capability must be 'document' or 'records'")
+        if self.capability not in ("document", "records", "table"):
+            raise ValueError("format capability must be 'document', 'records', or 'table'")
         object.__setattr__(self, "suffixes", suffixes)
         object.__setattr__(self, "filenames", filenames)
 
@@ -84,16 +84,18 @@ class FormatAdapter(Protocol):
 
 
 class RecordFormatAdapter(Protocol):
-    """Parse a bounded record source into an iterator of native values.
+    """Parse a bounded record or table source into native rows or records.
 
     The host consumes and closes this iterator before the YAML include finishes.
     Adapters receive already-read bytes, never a source opener or live stream.
+    Use ``capability="records"`` for record documents or ``capability="table"``
+    when the format should be selected only by ``!include-table``.
     """
 
     descriptor: ClassVar[FormatDescriptor]
 
     def iter_records(self, source: FormatInput, /) -> Iterator[object]:
-        """Yield ordered records from one already-bounded source."""
+        """Yield ordered records or table rows from one already-bounded source."""
         ...
 
 
@@ -392,7 +394,7 @@ def _iter_csv_records(source: FormatInput) -> Iterator[object]:
 class CsvAdapter:
     """Parse CSV as ordered rows of strings, with no header inference."""
 
-    descriptor: ClassVar[FormatDescriptor] = FormatDescriptor("csv", (".csv",), capability="records")
+    descriptor: ClassVar[FormatDescriptor] = FormatDescriptor("csv", (".csv",), capability="table")
 
     def iter_records(self, source: FormatInput, /) -> Iterator[object]:
         """Yield parsed CSV rows as lists of strings."""
@@ -575,6 +577,8 @@ class FormatRegistry:
             raise TypeError("document adapters must provide a parse(source) method")
         if descriptor.capability == "records" and not callable(iter_records):
             raise TypeError("record adapters must provide an iter_records(source) method")
+        if descriptor.capability == "table" and not callable(iter_records):
+            raise TypeError("table adapters must provide an iter_records(source) method")
         format_id = descriptor.format_id
         if format_id == "yaml":
             raise ValueError("the built-in YAML composition entry cannot be replaced")

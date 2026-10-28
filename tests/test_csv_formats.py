@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import csv
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 import yaml
@@ -14,6 +16,8 @@ from yaml.constructor import ConstructorError
 from yaml_compose import (
     CsvAdapter,
     FileSource,
+    FormatDescriptor,
+    FormatInput,
     FormatParseError,
     FormatRegistry,
     IncludeRequest,
@@ -36,7 +40,7 @@ def test_csv_table_uses_row_lists_by_default(test_path: Path) -> None:
     descriptor = FormatRegistry().detect_format(FileSource(source))
 
     assert descriptor.format_id == "csv"
-    assert descriptor.capability == "records"
+    assert descriptor.capability == "table"
     assert load_yaml_file(config) == {"rows": [["id", "enabled"], ["001", "true"]]}
     registry = FormatRegistry()
     registry.register(CsvAdapter(), replace=True)
@@ -67,7 +71,7 @@ def test_ordinary_include_rejects_csv_with_a_table_tag_hint_and_does_not_open_it
 
             return ResolvedInclude(FileSource(source), open_binary)
 
-    with pytest.raises(ConstructorError, match=r"CSV sources require !include-table") as caught:
+    with pytest.raises(ConstructorError, match=r"table sources require !include-table") as caught:
         load_yaml_file(config, include_resolver=Resolver())
 
     assert "while resolving !include" in str(caught.value)
@@ -79,11 +83,32 @@ def test_include_table_rejects_a_non_csv_source(test_path: Path) -> None:
     (test_path / "settings.yaml").write_text("value: 1\n", encoding="utf-8")
     config = _config(test_path, "table: !include-table settings.yaml\n")
 
-    with pytest.raises(ConstructorError, match=r"!include-table requires a CSV table source") as caught:
+    with pytest.raises(ConstructorError, match=r"!include-table requires a registered table source") as caught:
         load_yaml_file(config)
 
     assert "while resolving !include-table" in str(caught.value)
     assert caught.value.problem_mark is not None
+
+
+def test_registered_tsv_table_adapter_uses_include_table_without_changing_csv(test_path: Path) -> None:
+    class TsvAdapter:
+        descriptor: ClassVar[FormatDescriptor] = FormatDescriptor("tsv", (".tsv",), capability="table")
+
+        def iter_records(self, source: FormatInput, /) -> Iterator[object]:
+            text = source.data.decode("utf-8")
+            for line in text.splitlines():
+                yield line.split("\t")
+
+    (test_path / "people.tsv").write_text("name\tcode\nAda\t001\n", encoding="utf-8")
+    config = _config(test_path, "rows: !include-table people.tsv\n")
+    registry = FormatRegistry()
+    registry.register(TsvAdapter())
+
+    assert load_yaml_file(config, format_registry=registry) == {"rows": [["name", "code"], ["Ada", "001"]]}
+
+    config = _config(test_path, "rows: !include people.tsv\n")
+    with pytest.raises(ConstructorError, match=r"table sources require !include-table"):
+        load_yaml_file(config, format_registry=registry)
 
 
 def test_csv_row_lists_preserve_quoting_newlines_unicode_and_strings(test_path: Path) -> None:
