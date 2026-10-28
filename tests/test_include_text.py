@@ -45,7 +45,7 @@ def test_include_text_decodes_utf8_and_keeps_bom_as_text(test_path: Path) -> Non
 
 def test_include_text_constructor_is_copied_to_custom_safe_loader(test_path: Path) -> None:
     source = test_path / "template.txt"
-    source.write_text("{{ value }}\n", encoding="utf-8")
+    source.write_bytes(b"{{ value }}\n")
     config = _config(test_path, "template: !include-text template.txt\n")
 
     class CustomSafeLoader(yaml.SafeLoader):

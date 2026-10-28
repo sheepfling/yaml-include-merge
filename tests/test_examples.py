@@ -145,6 +145,11 @@ def test_csv_example_shows_both_explicit_result_shapes() -> None:
     }
 
 
+def test_example_payload_fixtures_use_lf_line_endings(examples_path: Path) -> None:
+    for relative_path in ("include_csv/people.csv", "include_non_yaml/notes.md"):
+        assert b"\r\n" not in (examples_path / relative_path).read_bytes()
+
+
 def test_ini_dotenv_and_text_examples_have_documented_results() -> None:
     assert load_non_yaml_example() == {
         "service": {

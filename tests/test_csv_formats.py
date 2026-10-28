@@ -84,10 +84,7 @@ def test_include_table_rejects_a_non_csv_source(test_path: Path) -> None:
 
 def test_csv_row_lists_preserve_quoting_newlines_unicode_and_strings(test_path: Path) -> None:
     source = test_path / "rows.csv"
-    source.write_text(
-        'name,note,value\n"Ada","comma, stays",001\n"Zoë","first line\nsecond line",true\n',
-        encoding="utf-8",
-    )
+    source.write_bytes('name,note,value\n"Ada","comma, stays",001\n"Zoë","first line\nsecond line",true\n'.encode())
     config = _config(
         test_path, "rows: !include-table rows.csv\nitems: [before, !spread [!include-table rows.csv], after]\n"
     )
@@ -101,6 +98,14 @@ def test_csv_row_lists_preserve_quoting_newlines_unicode_and_strings(test_path: 
         "rows": rows,
         "items": ["before", *rows, "after"],
     }
+
+
+def test_csv_preserves_crlf_inside_quoted_fields(test_path: Path) -> None:
+    source = test_path / "windows-lines.csv"
+    source.write_bytes(b'name,note\r\nGrace,"first line\r\nsecond line"\r\n')
+    config = _config(test_path, "rows: !include-table windows-lines.csv\n")
+
+    assert load_yaml_file(config) == {"rows": [["name", "note"], ["Grace", "first line\r\nsecond line"]]}
 
 
 def test_csv_header_records_are_an_explicit_per_loader_mode(test_path: Path) -> None:

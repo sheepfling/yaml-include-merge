@@ -1,0 +1,2 @@
+examples/include_csv/people.csv text eol=lf
+examples/include_non_yaml/notes.md text eol=lf
