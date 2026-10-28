@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from io import StringIO
 from typing import ClassVar, Literal, NoReturn, Protocol, cast
 
+from ._compat import toml_parser_module
 from .resolver import IncludeSource
 
 _FORMAT_ID = re.compile(r"[a-z][a-z0-9_-]*\Z")
@@ -240,13 +241,10 @@ def _mask_jsonc_comments(text: str) -> str:
 def _toml_parser() -> _TomlParser:
     """Use tomllib or the existing Python 3.10 tomli dependency lazily."""
     try:
-        return cast(_TomlParser, importlib.import_module("tomllib"))
+        return cast(_TomlParser, toml_parser_module())
     except ModuleNotFoundError as exc:
-        if exc.name != "tomllib":
+        if exc.name != "tomli":
             raise
-    try:
-        return cast(_TomlParser, importlib.import_module("tomli"))
-    except ModuleNotFoundError as exc:
         raise FormatDependencyError("TOML includes on Python before 3.11 require the tomli dependency") from exc
 
 

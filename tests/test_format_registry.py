@@ -360,13 +360,13 @@ def test_plugin_uses_shared_root_and_byte_limits_before_parsing(test_path: Path)
 def test_toml_parser_dependency_is_lazy_and_missing_dependency_is_marked(
     test_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import yaml_compose.formats as formats
+    import yaml_compose._compat as compat
 
     (test_path / "base.json").write_text('{"value":1}', encoding="utf-8")
     (test_path / "base.toml").write_text("value = 1\n", encoding="utf-8")
     config = test_path / "main.yaml"
     config.write_text("%LOADER YamlCompose\n---\njson: !include base.json\n", encoding="utf-8")
-    original_import_module = formats.importlib.import_module
+    original_import_module = compat.importlib.import_module
     calls: list[str] = []
 
     def unavailable(name: str) -> object:
@@ -375,7 +375,7 @@ def test_toml_parser_dependency_is_lazy_and_missing_dependency_is_marked(
             raise ModuleNotFoundError(name=name)
         return original_import_module(name)
 
-    monkeypatch.setattr(formats.importlib, "import_module", unavailable)
+    monkeypatch.setattr(compat.importlib, "import_module", unavailable)
     assert load_yaml_file(config) == {"json": {"value": 1}}
     assert calls == []
 

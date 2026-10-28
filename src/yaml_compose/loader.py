@@ -10,17 +10,11 @@ from __future__ import annotations
 
 import os
 import re
-import sys
 from collections.abc import Callable, Hashable, Iterable
 from dataclasses import dataclass
 from io import StringIO
 from pathlib import Path
 from typing import Generic, NamedTuple, NoReturn, TextIO, cast, overload
-
-if sys.version_info >= (3, 13):
-    from typing import TypeVar as _TypeVar
-else:
-    from typing_extensions import TypeVar as _TypeVar
 
 import yaml
 from yaml import MappingNode, Node, SafeLoader, ScalarNode, SequenceNode
@@ -28,6 +22,7 @@ from yaml.constructor import ConstructorError
 from yaml.error import MarkedYAMLError
 from yaml.resolver import BaseResolver
 
+from ._compat import _TypeVar
 from ._overlays import DELETE as _DELETE
 from ._overlays import ReplaceMarker as _ReplaceMarker
 from ._overlays import SpreadMarker as _SpreadMarker
