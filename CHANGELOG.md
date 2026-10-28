@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.1
+
+- Extend includes with strict JSON, JSONC, optional JSON5, JSONL/NDJSON, TOML, INI,
+  dotenv, and CSV table inputs. The per-loader format registry also supports custom
+  adapters, while YAML remains the composition language.
+- Add `!include-table` for CSV rows of strings, `!include-text` for UTF-8 text, and
+  `!include-raw` for exact bytes.
+- Preserve nested include routes in errors and support Python 3.10 through 3.15.
+
 ## 0.1.0
 
 Initial release of `yaml-compose`, a PyYAML adapter for composing configuration files.

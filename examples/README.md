@@ -11,6 +11,22 @@ links the runnable example files to the tests that check their results. Run
   [steps](quickstart/extra_steps.yaml).
 - [include_value.yaml](include_value.yaml) loads
   [database.yaml](database.yaml) as one mapping value.
+- [include_formats.yaml](include_formats.yaml) combines a JSON mapping,
+  [TOML values](include_formats/database.toml), and a JSON list spread. The
+  [worked guide](../docs/examples.md#include-json-and-toml-sources) shows the
+  exact resolved result and Python date-time types.
+- [include_records.yaml](include_records.yaml) includes a JSON Lines list and
+  spreads NDJSON records; the [worked guide](../docs/examples.md#json-lines-and-ndjson-records)
+  documents buffered record semantics.
+- [include_csv.py](include_csv.py) loads CSV rows of strings with
+  `!include-table`; the [worked guide](../docs/examples.md#csv-tables) shows the
+  simple YAML usage.
+- [include_non_yaml.py](include_non_yaml.py) includes INI, dotenv, and literal
+  text and raw bytes through YAML. It also opts into `.conf` parsing explicitly;
+  the [Markdown payload](include_non_yaml/notes.md) is included as text and the
+  [binary payload](include_non_yaml/payload.bin) as bytes. The
+  [worked guide](../docs/examples.md#ini-dotenv-and-text-includes) documents the
+  returned shapes and safety boundaries.
 - [shallow_merge.yaml](shallow_merge.yaml) replaces a nested mapping with `<<`.
 - [deep_merge.yaml](deep_merge.yaml) preserves nested defaults with `<<<`.
 - [merge_precedence.yaml](merge_precedence.yaml) shows earlier source priority
@@ -63,6 +79,10 @@ From the repository root after installing the package:
 
 ```shell
 python examples/load_config.py
+python examples/include_formats.py
+python examples/include_records.py
+python examples/include_csv.py
+python examples/include_non_yaml.py
 python examples/include_search.py
 python examples/in_memory_config.py
 python examples/custom_loader.py

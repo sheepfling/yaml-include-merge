@@ -11,7 +11,16 @@ COMPOSE_LOADER_TAG = "YamlCompose"
 """Value of ``%LOADER`` that opts a document into yaml-compose behavior."""
 
 INCLUDE_TAG = "!include"
-"""Tag that loads another YAML document."""
+"""Tag that loads a structured YAML or registered-format document."""
+
+INCLUDE_TABLE_TAG = "!include-table"
+"""Tag that loads a CSV source as ordered rows of strings."""
+
+INCLUDE_RAW_TAG = "!include-raw"
+"""Tag that includes the exact bounded bytes from a source."""
+
+INCLUDE_TEXT_TAG = "!include-text"
+"""Tag that includes a UTF-8 file as an unparsed string."""
 
 DELETE_TAG = "!delete"
 """Tag that removes an inherited mapping key."""
@@ -35,7 +44,10 @@ __all__ = (
     "COMPOSE_LOADER_TAG",
     "DEEP_MERGE_KEY",
     "DELETE_TAG",
+    "INCLUDE_RAW_TAG",
+    "INCLUDE_TABLE_TAG",
     "INCLUDE_TAG",
+    "INCLUDE_TEXT_TAG",
     "LOADER_DIRECTIVE",
     "MERGE_KEY",
     "MERGE_TAG",

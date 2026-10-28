@@ -1,37 +1,24 @@
 # yaml-compose
 
-**YAML, with a few more ways to compose it.**
+**Compose configuration with YAML.**
 
-YAML is good at describing configuration. Reusing that configuration is where things tend to get complicated.
+`yaml-compose` lets YAML files share defaults and describe how values combine. It adds
+explicit include and overlay operations while keeping the result as ordinary Python data.
 
-A common base, a few environment-specific changes, an inherited value you no longer want,
-or a list you'd rather extend than repeat—none of these should require introducing a
-template language.
+## Getting started
 
-`yaml-compose` adds a small set of opt-in composition semantics to YAML:
+Install from a checkout:
 
-- **`<<<`** recursively merges mappings, extending YAML's familiar `<<`.
-- **`!include`** brings another YAML file into the document.
-- **`!delete`** removes a key during an overlay.
-- **`!replace`** explicitly replaces a mapping instead of merging it.
-- **`!spread`** inserts elements from another sequence.
+```shell
+python -m pip install .
+```
 
-The syntax stays close to YAML. The results are ordinary Python values.
+Python 3.10 or later is required.
 
-These operators are `yaml-compose` semantics, not YAML-standard operations. YAML has
-syntax for application-specific tags, but it does not define what these tags or `<<<`
-mean. The `%LOADER YamlCompose` header is also a package-specific selector written
-with directive syntax; YAML does not define private directives. `yaml-compose`
-recognizes and removes this header before parsing the document with PyYAML. Other
-YAML tools will not apply these composition rules.
-
-## See it in action
-
-Suppose you start with a shared configuration:
-
-**`base.yaml`**
+Create a base configuration:
 
 ```yaml
+# base.yaml
 service:
   host: localhost
   port: 8080
@@ -42,11 +29,10 @@ logging:
   level: info
 ```
 
-Production needs a different host and set of labels, and shouldn't inherit the development token.
-
-**`production.yaml`**
+Then compose it with environment-specific values:
 
 ```yaml
+# production.yaml
 %LOADER YamlCompose
 ---
 <<<: !include base.yaml
@@ -57,23 +43,7 @@ service:
   token: !delete
 ```
 
-The composed result is:
-
-```yaml
-service:
-  host: api.example.test
-  port: 8080
-  labels: [production, metrics]
-
-logging:
-  level: info
-```
-
-The `port` and `logging` settings are inherited. The `host` and `labels` are overridden.
-The `token` is removed entirely.
-
-Nothing needs to know where a particular value came from after loading. The configuration
-is simply a mapping.
+Load it with the usual Python call:
 
 ```python
 from yaml_compose import load_yaml_file
@@ -81,437 +51,99 @@ from yaml_compose import load_yaml_file
 config = load_yaml_file("production.yaml")
 ```
 
-The `%LOADER YamlCompose` package header opts the document into composition. Ordinary
-YAML files can still be loaded without modification.
-
-## Composition that reads like YAML
-
-Rather than introducing conditionals, interpolation expressions, or a new configuration
-format, `yaml-compose` builds on structures YAML already has: mappings, sequences, scalars,
-anchors, and aliases.
-
-### Merge shallowly or recursively
-
-PyYAML supports `<<` as a shallow merge key, following the YAML 1.1-era merge-key
-working draft. YAML 1.2 removed `<<` from its core schema, so treat this as PyYAML
-compatibility behavior rather than portable YAML 1.2 syntax. In this behavior, local
-keys override inherited keys.
-
-`yaml-compose` introduces a package-specific recursive counterpart, `<<<`.
-
-```yaml
-%LOADER YamlCompose
----
-defaults: &defaults
-  service:
-    host: localhost
-    port: 8080
-
-shallow:
-  <<: *defaults
-  service:
-    port: 8081
-
-deep:
-  <<<: *defaults
-  service:
-    port: 8081
-```
-
-The distinction is straightforward:
-
-```yaml
-shallow:
-  service:
-    port: 8081
-
-deep:
-  service:
-    host: localhost
-    port: 8081
-```
-
-With `<<`, the local `service` mapping replaces the inherited mapping.
-
-With `<<<`, the two `service` mappings combine recursively.
-
-Both operators work with YAML aliases and included files:
-
-```yaml
-<<: *defaults
-<<: !include defaults.yaml
-
-<<<: *defaults
-<<<: !include defaults.yaml
-```
-
-The source changes; the merge semantics do not.
-
-### Delete what you don't want
-
-Sometimes overriding a value isn't enough. You want it gone.
-
-```yaml
-service:
-  token: !delete
-```
-
-During a mapping overlay, `!delete` removes the key rather than assigning a new value.
-
-This is deliberately different from `null`:
-
-```yaml
-token: null      # The key exists with a null value
-token: !delete   # The key is removed
-```
-
-With recursive merging, deletion also works inside nested mappings.
-
-### Replace when merging isn't appropriate
-
-Deep merging is useful until you want an entirely new mapping.
-
-`!replace` provides an explicit escape hatch:
-
-```yaml
-service: !replace
-  port: 9090
-```
-
-Under `<<<`, this discards the inherited `service` mapping and replaces it with one
-containing only `port`.
-
-You can also write `!replace {}` to clear a mapping, or use an existing mapping as the replacement:
-
-```yaml
-service: !replace [*replacement]
-service: !replace [!include replacement.yaml]
-```
-
-No special precedence trick is needed. The YAML says exactly what should happen.
-
-### Spread sequences without changing their defaults
-
-Sequences follow a simpler rule: **a local sequence replaces an inherited sequence**.
-
-That keeps recursive merging predictable. An empty list, `[]`, clears an inherited list.
-
-When you actually want to insert items from another sequence, use `!spread`.
-
-```yaml
-%LOADER YamlCompose
----
-common: &common [lint, test]
-
-steps:
-  - prepare
-  - !spread [*common]
-  - package
-```
-
-The result is:
-
-```yaml
-common: [lint, test]
-
-steps:
-  - prepare
-  - lint
-  - test
-  - package
-```
-
-The same syntax works with a YAML file containing a sequence:
-
-```yaml
-steps:
-  - prepare
-  - !spread [!include common-steps.yaml]
-  - package
-```
-
-The insertion happens exactly where `!spread` appears.
-
-### Predictable precedence
-
-Composition follows a few consistent rules:
-
-- Explicit local keys win over inherited values.
-- When multiple merge sources are supplied, earlier sources win over later ones.
-- Recursive merging combines mappings with mappings; other local values replace inherited values.
-- Lists replace by default, unless elements are explicitly inserted with `!spread`.
-- A mapping uses one merge key, which may accept a sequence of sources.
-
-For example:
-
-```yaml
-<<<:
-  - !include environment.yaml
-  - !include defaults.yaml
-
-service:
-  port: 9090
-```
-
-Here, `environment.yaml` has precedence over `defaults.yaml`, while the local `service.port`
-takes precedence over both.
-
-## Includes that follow the configuration
-
-An include should behave like a reference to another file—not like a path whose meaning
-depends on where Python happened to be started.
-
-By default, a bare include name resolves **relative to the YAML file containing the include**.
-
-Consider:
-
-```text
-config/
-├── app.yaml
-├── defaults.yaml
-└── services/
-    ├── api.yaml
-    └── logging.yaml
-```
-
-In `app.yaml`:
-
-```yaml
-%LOADER YamlCompose
----
-<<<: !include defaults.yaml
-
-service: !include services/api.yaml
-```
-
-And in `services/api.yaml`:
-
-```yaml
-%LOADER YamlCompose
----
-<<<: !include logging.yaml
-
-host: localhost
-```
-
-The nested include resolves beside `api.yaml`, not beside `app.yaml`.
-
-This means configuration files can naturally refer to their neighbors, even when included
-several levels deep.
-
-### Search paths when you need them
-
-Sometimes configurations share a common library of reusable files.
-
-For those cases, you can supply additional search paths:
-
-```python
-from pathlib import Path
-from yaml_compose import YamlConfigLoader
-
-loader = YamlConfigLoader(
-    search_paths=[Path("config/shared")]
-)
-
-development = loader.load_file("config/development.yaml")
-production = loader.load_file("config/production.yaml")
-```
-
-By default, lookup tries the directory of the YAML file containing the include, then
-configured search paths in order. Set `include_search` to `search-first`, `local-only`,
-or `search-only` to change that policy for bare names (`local-first` is the default).
-Explicit `./` and `../` paths always refer to the including file and do not fall back
-to search paths; an absolute path names one exact file. Every resolved file must stay
-within an allowed root, including after symlinks are resolved. The process's current
-working directory is never an implicit fallback.
-
-By default, the top-level file's directory and configured search paths define the allowed
-roots. You can supply `allowed_roots` explicitly when a configuration needs access to a
-broader or different directory layout.
-
-An allowed root is required only when `!include` is used. Streams containing only
-anchors, mapping overlays, and list spreads work without search paths or roots.
-An include without an allowed root raises a YAML error at the tag before its resolver is called.
-
-To reject absolute paths in `!include`, set `allow_absolute_includes=False`:
-
-```python
-loader = YamlConfigLoader(
-    allowed_roots=[Path("config").resolve()],
-    allow_absolute_includes=False,
-)
-```
-
-The option also applies to nested includes. Relative `../` paths remain available only
-when their resolved target stays within an allowed root. Absolute paths are allowed by
-default for compatibility; allowed roots constrain them in either mode.
-
-These boundaries also apply after resolving symlinks. A file found outside an allowed root
-is an error, not a reason to silently try the next candidate.
-
-The goal is simple: **a configuration should resolve the same way regardless of where the
-application is launched.**
-
-## Includes don't have to come from files
-
-The `!include` syntax describes the relationship between configuration values. It doesn't
-have to dictate where those values are stored.
-
-Filesystem resolution is the default, but applications can inject their own implementation
-of the `IncludeResolver` protocol.
-
-This makes it possible to supply YAML from application-managed or virtual sources without
-changing the configuration syntax.
-
-The package includes a `MemoryIncludeResolver` for in-memory configuration:
-
-[See the in-memory configuration example](examples/in_memory_config.py).
-
-Custom resolvers are trusted application code and are responsible for respecting the
-requested resolution boundaries. The built-in resolvers are local-only and do not fetch
-network URLs.
-
-## Getting started
-
-Install from the repository:
-
-```shell
-python -m pip install .
-```
-
-For most applications, loading a configuration takes one call:
-
-```python
-from yaml_compose import load_yaml_file
-
-config = load_yaml_file("config.yaml")
-```
-
-`load_yaml_file` handles both ordinary YAML and documents opted into composition.
-
-For repeated loads or shared include policies, configure `YamlConfigLoader` once.
-
-You can also explicitly choose composition with `load_yaml_compose`, or supply a custom
-PyYAML loader through `yaml_loader` when your application defines additional trusted YAML
-tags.
-
-By default, parsing uses PyYAML's `SafeLoader`.
-
-## A small extension, not a new YAML language
-
-Composition is intentionally narrow.
-
-There is no separate expression language, no new type system, and no requirement to migrate
-existing configuration files. The added operators are explicit, and the result remains
-ordinary Python data.
-
-A few boundaries are worth knowing:
-
-- **Composition is opt-in.** `%LOADER YamlCompose` activates the extended behavior for a
-  document. Included files use composition by default; `recursive_dispatch=False` changes
-  how nested files are parsed.
-- **Includes are bounded.** Configurable limits constrain include depth, file count, file
-  size, and total included bytes. Each bound accepts `None` to leave that resource unlimited.
-- **Errors retain context.** YAML errors preserve source locations, while include failures
-  identify the reference and the failed path or resolution policy.
-- **Output is data, not an editable document tree.** Comments, formatting, and per-key
-  source provenance are not retained.
-- **PyYAML's scalar rules remain in effect.** This package does not change implicit scalar
-  resolution to YAML 1.2 behavior. Duplicate explicit mapping keys are rejected.
-
-For details on the grammar, operators, and implementation choices, see the [design notes](docs/design-notes.md).
-
-Use an `IncludeLimits` profile to share bounds across loads. Pass it to
-`YamlConfigLoader` or to `load_yaml_file`, `load_yaml_dispatch`, or `load_yaml_compose`:
-
-```python
-from yaml_compose import DEFAULT_INCLUDE_LIMITS, IncludeLimits, YamlConfigLoader
-
-profile = IncludeLimits(max_include_depth=8, max_include_files=24)
-loader = YamlConfigLoader(include_limits=profile)
-```
-
-`DEFAULT_INCLUDE_LIMITS` exposes the package baseline. `set_default_include_limits` can
-change the process-wide defaults for new loads; each loader captures its limits when it is
-created. The process-wide defaults are kept as a separate copy of the baseline. A loader's
-`include_limits` profile can be adjusted for its later loads. Existing `max_*` arguments
-override only their corresponding profile fields, and an explicit `None` leaves that bound
-unlimited.
-
-File and byte budgets count repeated includes of the same file, including includes used
-by `!spread` or `!replace`. Budgets reset for each top-level load. The top-level input
-does not count toward these include budgets. They bound input bytes, not the size of
-the resulting Python objects. These defaults are package policy, not YAML requirements.
-
-## Examples
-
-The repository includes runnable examples covering the main composition behaviors:
-
-- [Merge modes](examples/merge_modes.yaml) — shallow and recursive merges, using aliases and files
-- [In-memory includes](examples/in_memory_config.py) — application-owned include resolution
-- [Custom YAML loaders](examples/custom_loader.py) — extending the underlying PyYAML loader
-- [Include limits](examples/include_limits.py) — controlling resource budgets
-
-The [worked examples guide](docs/examples.md) walks through the corresponding configurations and results.
-The [examples index](examples/README.md) links the runnable files to their expected-value tests.
+The included port and logging settings are retained, local values override the base, and
+`token` is removed. The `%LOADER YamlCompose` header opts this file into composition;
+ordinary YAML files can still be loaded as ordinary YAML.
+
+## How composition works
+
+- `<<` performs PyYAML's familiar shallow mapping merge; `<<<` recursively merges mappings.
+- Explicit local keys override inherited values. When several sources are listed, earlier
+  sources take precedence over later ones.
+- Lists replace inherited lists. Use `!spread` to insert items from a sequence where they
+  belong.
+- `!delete` removes an inherited key. `null` keeps the key with a null value.
+- `!replace` replaces an inherited mapping instead of merging it; `!replace {}` clears it.
+
+These are `yaml-compose` operations, not YAML-standard merge directives. YAML provides
+application-specific tag syntax, but it does not define these tags or the `<<<` key. The
+package-specific header uses YAML directive syntax; other YAML tools do not apply these
+composition rules.
+
+See [worked examples](docs/examples.md) for merge precedence, nested includes, spreads,
+replacement, deletion, and list behavior. The [design notes](docs/design-notes.md) explain
+how the composition rules relate to YAML and PyYAML.
+
+## Include other files
+
+Use `!include` for structured data. The resolved filename selects the parser; YAML remains
+the composition layer, so included mappings can participate in the same merge operations.
+
+| Tag              | Input                                | Result                              |
+| ---------------- | ------------------------------------ | ----------------------------------- |
+| `!include`       | YAML, JSON-family, TOML, INI, dotenv | Native Python value                 |
+| `!include-table` | CSV or registered table adapter      | Rows of strings; first row included |
+| `!include-text`  | UTF-8 text                           | Exact decoded string                |
+| `!include-raw`   | Any file                             | Exact bytes                         |
+
+JSON5 is optional; install `yaml-compose[json5]` to use it. JSON Lines and NDJSON produce
+ordered lists of records. CSV needs no Python setup and does not infer headers or convert
+cell values. Custom table adapters, such as a caller-supplied TSV parser, can also use
+`!include-table`; no other table formats are guessed. TOML date and time values remain Python
+`date`, `time`, or `datetime` objects.
+Raw includes return bytes, which need explicit conversion before JSON serialization.
+
+For parser details and the format adapter API, see the [included formats guide](docs/formats.md).
+The [worked format examples](docs/examples.md#include-json-and-toml-sources) cover JSON,
+TOML, JSONC, JSON5, JSON Lines, NDJSON, and CSV. See the [INI, dotenv, and text examples](docs/examples.md#ini-dotenv-and-text-includes)
+for string, text, and raw includes.
+
+## Loading and include boundaries
+
+`load_yaml_file` handles both ordinary YAML and documents opted into composition. Use
+`load_yaml_compose` when you want to explicitly select composition. For repeated loads or
+shared policies, configure a `YamlConfigLoader` once. The default parser uses PyYAML's
+`SafeLoader`; applications can provide a trusted custom loader for their own YAML tags.
+
+Filesystem includes resolve relative to the file containing the reference. The default
+resolver is local-only; it does not fetch URLs. Resolved files must stay within allowed roots,
+and configurable limits bound include depth, file count, per-file size, and total included
+bytes. The same checks apply to YAML, structured formats, text, raw bytes, and CSV tables.
+Applications can supply an `IncludeResolver` for their own trusted sources; see the
+[format and adapter guide](docs/formats.md) and [in-memory example](examples/in_memory_config.py).
+
+Loading returns values, not an editable YAML syntax tree: comments, formatting, and per-key
+source provenance are not retained. PyYAML's scalar resolution rules remain in effect, and
+explicit duplicate mapping keys are rejected.
+
+When a nested include fails, the original PyYAML exception type and leaf mark are preserved.
+The error prints the route from the root include site to the failing source. Call
+`get_include_route(error)` for a typed tuple of `IncludeRouteFrame` values; each frame has the
+including source, one-based line and column, tag, requested path, and resolved source when
+available.
+
+## Explore
+
+- The [examples index](examples/README.md) lists runnable examples and expected results;
+  [tests/test_examples.py](tests/test_examples.py) verifies those results.
+- [Included formats and custom adapters](docs/formats.md)
+- [Worked loading examples](docs/examples.md)
+- [Composition design notes](docs/design-notes.md)
 
 ## Development
 
-Install development dependencies with Python 3.11 or newer (`mdrepo` requires 3.11+):
+Install the development tools and run the repository checks:
 
 ```shell
 python -m pip install -e ".[dev]"
-```
-
-Run the full CI check set locally:
-
-```shell
 python -m scripts.ci
 ```
 
-GitHub Actions uses the same command coordinator. Every Python 3.10–3.15 job on Windows
-and Linux runs `python -m scripts.ci --python-only`: compilation, Ruff lint and formatting,
-strict Pyright checks targeting that Python version, and the complete pytest suite with
-branch coverage (at least 80%). Test discovery includes both the simple examples and the
-nested composition, search policy, overlay, and spread tests.
+The package supports Python 3.10 and later. The [examples tests](tests/test_examples.py)
+check the documented results.
 
-A separate Python 3.14 job runs `python -m scripts.ci --quality-only` for Markdown lint,
-repository policy, pre-commit hooks, package builds, and Twine validation, as well as
-Python quality checks. A full local run covers both groups with the
-active interpreter. Add `--fix` to apply safe Ruff, rumdl, and mdrepo fixes before checking.
+## License and release notes
 
-To run the Python checks alone, including on Python 3.10, install the smaller extras:
-
-```shell
-python -m pip install -e ".[test,lint]"
-python -m scripts.ci --python-only
-```
-
-Use `python -m scripts.ci --tests-only` to run just the complete test suite and coverage.
-
-The examples can also be run directly:
-
-```shell
-python examples/load_config.py
-python examples/in_memory_config.py
-python examples/custom_loader.py
-python examples/include_limits.py
-python -m pytest -v
-```
-
-The package supports Python 3.10 and newer.
-
-Behavioral examples are exercised by [`tests/test_examples.py`](tests/test_examples.py),
-with individual operator semantics covered by [`tests/test_semantics.py`](tests/test_semantics.py).
-
-## License and attribution
-
-The original loader and ongoing package development are credited to `sheepfling`.
-`yaml-compose` is distributed under the [MIT license](LICENSE).
-
-See the [changelog](CHANGELOG.md) for release notes and the [release guide](docs/releasing.md)
+`yaml-compose` is distributed under the [MIT license](LICENSE). See the
+[changelog](CHANGELOG.md) for release notes and the [release guide](docs/releasing.md)
 for the publishing process.
-
----
-
-**YAML for the data. A few explicit operators for composing it.**

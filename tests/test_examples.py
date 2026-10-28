@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -9,7 +10,11 @@ import yaml
 
 from examples.custom_loader import load_example as load_custom_loader_example
 from examples.in_memory_config import load_example
+from examples.include_csv import load_example as load_csv_example
+from examples.include_formats import load_example as load_include_formats_example
 from examples.include_limits import load_example as load_unbounded_example
+from examples.include_non_yaml import load_conf_alias_example
+from examples.include_non_yaml import load_example as load_non_yaml_example
 from examples.include_search import load_example as load_search_example
 from examples.load_config import load_examples
 from yaml_compose import IncludeSearch, load_yaml_file
@@ -102,6 +107,54 @@ def test_in_memory_example_resolves_nested_relative_include() -> None:
     assert load_example() == {"service": {"host": "localhost", "port": 8081, "labels": ["base"]}}
 
 
+def test_json_and_toml_example_has_the_documented_result() -> None:
+    assert load_include_formats_example() == {
+        "service": {"host": "api.example.test", "port": 8080, "labels": ["production"]},
+        "logging": {"level": "info", "format": "json"},
+        "database": {
+            "host": "db.example.test",
+            "port": 5432,
+            "created": datetime(1979, 5, 27, 7, 32, tzinfo=timezone.utc),
+        },
+        "steps": ["prepare", "lint", "test", "deploy"],
+    }
+
+
+def test_record_formats_example_has_the_documented_result(examples_path: Path) -> None:
+    assert load_yaml_file(examples_path / "include_records.yaml") == {
+        "records": [{"event": "started", "service": "api"}, None],
+        "steps": ["prepare", "lint", {"suite": "unit", "passed": True}, "deploy"],
+    }
+
+
+def test_csv_example_shows_simple_row_list_result() -> None:
+    assert load_csv_example() == {
+        "people": [
+            ["name", "note"],
+            ["Ada", "likes, commas"],
+            ["Grace", "first line\nsecond line"],
+        ]
+    }
+
+
+def test_example_payload_fixtures_use_lf_line_endings(examples_path: Path) -> None:
+    for relative_path in ("include_csv/people.csv", "include_non_yaml/notes.md"):
+        assert b"\r\n" not in (examples_path / relative_path).read_bytes()
+
+
+def test_ini_dotenv_and_text_examples_have_documented_results() -> None:
+    assert load_non_yaml_example() == {
+        "service": {
+            "DEFAULT": {"Region": "us-east"},
+            "Service": {"Region": "us-east", "Host": "api.example.test", "Port": "8080"},
+        },
+        "environment": {"SERVICE_TOKEN": "development-token", "FEATURE_FLAG": "001"},
+        "notes": "# Operator notes\n\nKeep this Markdown as text, including its trailing newline.\n",
+        "payload": b"\x00binary\xff\r\n",
+    }
+    assert load_conf_alias_example() == {"settings": {"Service": {"Name": "background-worker"}}}
+
+
 def test_custom_loader_example_uses_its_tag_inside_a_nested_include() -> None:
     assert load_custom_loader_example() == {"profile": {"name": "ALICE"}}
 
@@ -135,7 +188,7 @@ def test_include_limit_example_distinguishes_bounded_from_unbounded(
 def test_merge_modes_example_covers_sources_depth_and_replacement(examples_path: Path) -> None:
     result = load_yaml_file(examples_path / "merge_modes.yaml")
     assert isinstance(result, dict)
-    assert set(result) == {
+    assert result.keys() == {
         "defaults",
         "replacement",
         "shallow_anchor",

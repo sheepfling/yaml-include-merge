@@ -52,6 +52,227 @@ database:
   port: 5432
 ```
 
+## Include JSON and TOML sources
+
+The runnable [`include_formats.yaml`](../examples/include_formats.yaml) example
+uses `<<<` with a JSON object, includes a TOML table as a value, and spreads a
+JSON array into a sequence. Its JSON defaults are:
+
+```json
+{
+  "service": {"host": "shared.example.test", "port": 8080, "labels": ["shared"], "token": "development"},
+  "logging": {"level": "info", "format": "json"}
+}
+```
+
+The TOML value uses standard TOML date-time syntax:
+
+```toml
+host = "db.example.test"
+port = 5432
+created = 1979-05-27T07:32:00Z
+```
+
+The YAML file applies a deep override and spreads the JSON steps:
+
+```yaml
+%LOADER YamlCompose
+---
+<<<: !include ./include_formats/base.json
+database: !include ./include_formats/database.toml
+service:
+  host: api.example.test
+  labels: [production]
+  token: !delete
+steps:
+  - prepare
+  - !spread [!include ./include_formats/steps.json]
+  - deploy
+```
+
+The resulting Python value is:
+
+```python
+{
+    "service": {"host": "api.example.test", "port": 8080, "labels": ["production"]},
+    "logging": {"level": "info", "format": "json"},
+    "database": {
+        "host": "db.example.test",
+        "port": 5432,
+        "created": datetime.datetime(1979, 5, 27, 7, 32, tzinfo=datetime.timezone.utc),
+    },
+    "steps": ["prepare", "lint", "test", "deploy"],
+}
+```
+
+JSON objects, arrays, strings, numbers, booleans, and `null` keep their natural
+Python values. Duplicate JSON object keys and non-finite numbers (`NaN` and
+`Infinity`) are rejected because those constants are outside JSON. TOML date,
+time, and datetime values remain Python
+`date`, `time`, and `datetime` objects, while TOML arrays remain Python lists
+inside the root table. TOML's standard `inf` and `nan` floats remain native
+Python floats. JSON and TOML are selected by the resolved include source's
+`.json` or `.toml` suffix; other suffixes continue to use YAML for compatibility.
+JSON and TOML require UTF-8 text without a byte-order mark (BOM). A BOM is passed
+to the strict format parser and reported as a marked include parse error; it is
+not stripped before parsing.
+Python 3.10 uses the declared `tomli` dependency; Python 3.11 and later use the
+standard-library `tomllib` parser.
+All included formats share the normal source-root, cycle, and resource-limit
+checks. Exact outputs are asserted in
+[`tests/test_examples.py`](../tests/test_examples.py) and parser failures in
+[`tests/test_include_formats.py`](../tests/test_include_formats.py).
+
+### Layer JSONC and JSON5
+
+JSONC is useful when shared JSON defaults need comments while retaining JSON's
+strict data rules. JSON5 accepts a wider configuration syntax; install its
+optional parser with `pip install 'yaml-compose[json5]'`.
+
+`defaults.jsonc`:
+
+```jsonc
+{
+  // Shared service defaults.
+  "service": { "port": 8080 },
+  "labels": ["base"]
+}
+```
+
+`local.json5`:
+
+```json5
+{
+  service: { host: 'api.example.test' },
+  labels: ['production',],
+}
+```
+
+Compose both in YAML:
+
+```yaml
+%LOADER YamlCompose
+---
+<<<: [!include defaults.jsonc, !include local.json5]
+```
+
+The YAML merge keeps the inherited `service.port`, adds `service.host`, and
+replaces the list:
+
+```python
+{
+    "service": {"port": 8080, "host": "api.example.test"},
+    "labels": ["production"],
+}
+```
+
+The `.jsonc` parser rejects trailing commas, duplicate keys, and non-finite
+numbers just like `.json`. JSON5 duplicate keys are rejected; its native
+`NaN`/infinity values remain Python floats. See the
+[format guide](formats.md) for parser and error details.
+
+### JSON Lines and NDJSON records
+
+The runnable [`include_records.yaml`](../examples/include_records.yaml) example
+includes a JSON Lines file as a list and spreads records from an NDJSON file:
+
+```yaml
+%LOADER YamlCompose
+---
+records: !include ./include_records/events.jsonl
+steps:
+  - prepare
+  - !spread [!include ./include_records/checks.ndjson]
+  - deploy
+```
+
+Each file produces an ordered Python list. The example resolves to:
+
+```python
+{
+    "records": [{"event": "started", "service": "api"}, None],
+    "steps": ["prepare", "lint", {"suite": "unit", "passed": True}, "deploy"],
+}
+```
+
+Records can be any strict JSON root value. Duplicate keys, non-finite numbers,
+invalid UTF-8, BOMs, and blank records fail with an include error. Both formats
+accept CRLF and a missing final newline; the latter is an interoperability
+extension for NDJSON, whose serialization specification requires a trailing LF.
+An empty file returns `[]`. JSONL always rejects blank lines; NDJSON rejects them
+by default but can be configured to skip them with `NdjsonAdapter`. The include
+loader reads bounded bytes and materializes the list before returning, so this is
+not constant-memory streaming. YAML can spread the list into a sequence, but a
+list of records is not a mapping merge source. Exact output is asserted by
+[`tests/test_examples.py`](../tests/test_examples.py); parser and failure cases
+are covered by [`tests/test_record_formats.py`](../tests/test_record_formats.py).
+
+### CSV tables
+
+Use `!include-table` for a CSV file. The default filesystem resolver opens the file;
+no Python setup is required:
+
+```yaml
+%LOADER YamlCompose
+---
+people: !include-table people.csv
+```
+
+The result is a list of rows. The first row is data, and values such as `001` and
+`true` stay strings:
+
+```python
+[["name", "note"], ["Ada", "likes, commas"], ["Grace", "first line\nsecond line"]]
+```
+
+CSV parsing uses the standard-library reader's comma and quoting rules without header,
+delimiter, or value conversion heuristics. Empty input returns `[]`; blank lines become
+empty rows; varying row widths are preserved. `!include` rejects CSV files and points to
+`!include-table` instead. The runtime's `csv.field_size_limit()` adds a separate per-field
+limit. See the [format guide](formats.md#csv-tables) for details. CSV behavior is covered by
+[`tests/test_csv_formats.py`](../tests/test_csv_formats.py).
+
+## INI, dotenv, and text includes
+
+The runnable [`include_non_yaml.py`](../examples/include_non_yaml.py) loads these YAML
+references:
+
+```yaml
+%LOADER YamlCompose
+---
+service: !include ./include_non_yaml/service.ini
+environment: !include ./include_non_yaml/.env
+notes: !include-text ./include_non_yaml/notes.md
+payload: !include-raw ./include_non_yaml/payload.bin
+```
+
+The `.ini` file contains a `[DEFAULT]` value and a `[Service]` section. Its result retains
+strings and key case:
+
+```python
+{
+    "service": {
+        "DEFAULT": {"Region": "us-east"},
+        "Service": {"Region": "us-east", "Host": "api.example.test", "Port": "8080"},
+    },
+    "environment": {"SERVICE_TOKEN": "development-token", "FEATURE_FLAG": "001"},
+    "notes": "# Operator notes\n\nKeep this Markdown as text, including its trailing newline.\n",
+    "payload": b"\x00binary\xff\r\n",
+}
+```
+
+The dotenv reader accepts a small line-oriented syntax, keeps all values as strings, and does
+not access or mutate the process environment. Placeholder-looking text such as `${HOME}` is
+literal. `!include-text` returns the Markdown without parsing or trimming it; it preserves line
+endings and trailing whitespace. `!include-text` uses the configured resolver and standard
+include budgets. `!include-raw` returns the exact bytes, including NUL and non-UTF-8 values,
+without decoding or parsing them.
+
+`.conf` and `.cfg` remain unknown suffixes by default. The example's second loader registers
+them explicitly with `IniAdapter`, then loads [`include_conf.yaml`](../examples/include_conf.yaml).
+See the [format guide](formats.md#ini-dotenv-and-text-includes) for accepted parser syntax and
+error policies.
+
 ## Three filesystem layers
 
 These files live in `examples/`. The first file provides defaults:

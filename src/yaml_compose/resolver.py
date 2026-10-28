@@ -2,7 +2,8 @@
 
 Resolvers locate a source but do not parse it. The loader validates the source
 against configured roots, opens the returned stream, applies resource budgets,
-and parses it with the selected PyYAML loader (SafeLoader by default).
+and dispatches it to the selected format parser. YAML uses the configured
+PyYAML loader (SafeLoader by default).
 """
 
 from __future__ import annotations
@@ -52,7 +53,7 @@ IncludeRoot = FileRoot | MemoryRoot
 
 @dataclass(frozen=True, slots=True)
 class FileSource:
-    """Identity of one filesystem YAML source.
+    """Identity of one filesystem include source.
 
     ``path`` is resolved by the loader before root and cycle checks.
     """
@@ -62,7 +63,7 @@ class FileSource:
 
 @dataclass(frozen=True, slots=True)
 class MemorySource:
-    """Identity of one file inside a ``MemoryRoot``.
+    """Identity of one included document inside a ``MemoryRoot``.
 
     ``path`` is a relative POSIX path within ``root``. Absolute paths, empty
     paths, and parent traversal raise ``ValueError``.
@@ -77,7 +78,7 @@ class MemorySource:
             raise ValueError("memory source paths must stay within their namespace root")
 
 
-#: The identity of a filesystem or in-memory YAML document.
+#: The identity of a filesystem or in-memory included document.
 IncludeSource = FileSource | MemorySource
 
 
@@ -113,10 +114,14 @@ class ResolvedInclude:
     ``open_binary`` is called only after the loader checks that identity. It
     must return a readable binary stream. Ownership passes to the loader, which
     closes it on success and every error path.
+    ``format_id`` may explicitly select a registered parser; when omitted, the
+    loader selects by the resolved source suffix and keeps unknown suffixes on
+    the legacy YAML path.
     """
 
     source: IncludeSource
     open_binary: Callable[[], BinaryIO]
+    format_id: str | None = None
 
 
 class IncludeResolver(Protocol):

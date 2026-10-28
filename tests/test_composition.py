@@ -16,6 +16,7 @@ from yaml_compose import (
     MemoryRoot,
     MemorySource,
     YamlConfigLoader,
+    YamlType,
     load_yaml_file,
 )
 
@@ -345,7 +346,7 @@ def test_repeated_nested_spreads_share_budgets_and_accept_exact_boundaries(
         "total_bytes": 2 * (shared_bytes + leaf_bytes),
     }
 
-    def loader(reduction: int) -> YamlConfigLoader:
+    def loader(reduction: int) -> YamlConfigLoader[YamlType]:
         limits = {**bounds, resource: bounds[resource] - reduction}
         return YamlConfigLoader(
             max_include_depth=limits["depth"],

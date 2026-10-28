@@ -27,7 +27,7 @@ _DEFAULT_MAX_TOTAL_INCLUDE_BYTES = 67_108_864
 
 @dataclass(slots=True)
 class IncludeLimits:
-    """Optional non-negative limits applied to files reached through ``!include``.
+    """Optional non-negative limits applied to files reached through include tags.
 
     The top-level YAML input is not byte-limited. Each new top-level load starts
     a fresh count. A non-negative integer enforces a bound; zero forbids any
@@ -41,8 +41,8 @@ class IncludeLimits:
     They bound input content, not the size of the constructed Python object graph.
 
     Attributes:
-        max_include_depth: Maximum nested ``!include`` levels, or ``None``.
-        max_include_files: Maximum ``!include`` operations per top-level load,
+        max_include_depth: Maximum nested include levels, or ``None``.
+        max_include_files: Maximum include operations per top-level load,
             counting repeated loads of the same source, or ``None``.
         max_file_bytes: Maximum encoded bytes read from one included file, or ``None``.
         max_total_include_bytes: Maximum encoded bytes read across all includes,

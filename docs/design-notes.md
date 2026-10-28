@@ -100,3 +100,11 @@ Composition is enabled by the package header `%LOADER YamlCompose` or by explici
 selecting the composition API. Ordinary YAML keeps the ordinary loader path.
 `SafeLoader` is the default; applications can select another trusted PyYAML loader.
 The result is a Python value, without comments, source formatting, or per-key provenance.
+
+`!include` dispatches registered document adapters from the resolved source's suffix.
+Built-ins cover JSON-family formats, TOML, INI, and dotenv; unknown suffixes keep the
+existing YAML parsing behavior. CSV uses the explicit `!include-table` tag and returns
+rows of strings without inferring a header. TOML date/time values remain Python `date`, `time`, or
+`datetime` objects. `!include-text` returns strict UTF-8 text without parsing, while
+`!include-raw` returns exact source bytes. All include forms share the resolver, allowed roots,
+cycle detection, stream ownership, and resource budgets.
