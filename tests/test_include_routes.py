@@ -201,7 +201,9 @@ def test_nested_file_and_byte_budget_failures_include_the_child_source_route(
 ) -> None:
     main = test_path / "main.yaml"
     _write(main, "%LOADER YamlCompose\n---\nvalue: !include env.yaml\n")
-    _write(test_path / "env.yaml", "x: !include v.yaml\n")
+    env_content = b"x: !include v.yaml\n"
+    assert len(env_content) == 19
+    _write(test_path / "env.yaml", env_content)
     _write(test_path / "v.yaml", f"value: {'x' * 64}\n")
 
     with pytest.raises(yaml.YAMLError, match=message) as caught:
