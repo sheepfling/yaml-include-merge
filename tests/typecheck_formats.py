@@ -14,9 +14,11 @@ from yaml_compose import (
     FormatDescriptor,
     FormatInput,
     FormatRegistry,
+    IncludeRouteFrame,
     RecordFormatAdapter,
     YamlConfigLoader,
     YamlType,
+    get_include_route,
     load_yaml_compose,
     load_yaml_dispatch,
     load_yaml_file,
@@ -41,6 +43,15 @@ class PluginRecordAdapter:
 
     def iter_records(self, source: FormatInput, /) -> Iterator[object]:
         yield source.data.decode("utf-8")
+
+
+class TupleAdapter:
+    """Example adapter whose value cannot be promised by the built-in YAML type."""
+
+    descriptor: ClassVar[FormatDescriptor] = FormatDescriptor("tuple-plugin", (".tuple-plugin",))
+
+    def parse(self, source: FormatInput, /) -> tuple[str, ...]:
+        return tuple(source.data.decode("utf-8").split())
 
 
 def check_default_result_types(stream: TextIO, path: Path) -> None:
@@ -99,9 +110,18 @@ def check_injected_result_types(stream: TextIO, path: Path) -> None:
     explicit_safe_loader = YamlConfigLoader(yaml_loader=SafeLoader)
     assert_type(explicit_safe_loader.load_file(path), object)
 
+    tuple_formats = FormatRegistry()
+    tuple_formats.register(TupleAdapter())
+    assert_type(load_yaml_file(path, format_registry=tuple_formats), object)
+
 
 def check_record_adapter_contract() -> None:
     formats = FormatRegistry()
     adapter: RecordFormatAdapter = PluginRecordAdapter()
     formats.register(adapter)
     assert_type(formats.get_format("record-plugin").capability, FormatCapability)
+
+
+def check_include_route_helper(error: BaseException) -> None:
+    """Callers can inspect route frames without relying on dynamic exception attrs."""
+    assert_type(get_include_route(error), tuple[IncludeRouteFrame, ...])

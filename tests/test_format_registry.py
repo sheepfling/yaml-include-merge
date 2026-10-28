@@ -68,6 +68,21 @@ def test_independent_adapter_uses_yaml_merge_and_spread_without_core_edits(test_
     }
 
 
+def test_custom_adapter_tuple_value_is_preserved_for_object_typed_consumers(test_path: Path) -> None:
+    class TupleAdapter:
+        descriptor: ClassVar[FormatDescriptor] = FormatDescriptor("tuple-plugin", (".tuple-plugin",))
+
+        def parse(self, source: FormatInput, /) -> tuple[str, ...]:
+            return tuple(source.data.decode("utf-8").split())
+
+    (test_path / "value.tuple-plugin").write_text("one two", encoding="utf-8")
+    config = test_path / "main.yaml"
+    config.write_text("%LOADER YamlCompose\n---\nvalue: !include value.tuple-plugin\n", encoding="utf-8")
+    registry = _registry(TupleAdapter())
+
+    assert load_yaml_file(config, format_registry=registry) == {"value": ("one", "two")}
+
+
 def test_all_public_load_entrypoints_accept_a_registry(test_path: Path) -> None:
     (test_path / "value.example").write_text("shared", encoding="utf-8")
     path = test_path / "main.yaml"
