@@ -8,6 +8,7 @@ from pathlib import Path, PurePosixPath
 import pytest
 import yaml
 from yaml.constructor import ConstructorError
+from yaml.parser import ParserError
 
 from yaml_compose import (
     IncludeRouteFrame,
@@ -67,7 +68,7 @@ def test_nested_yaml_parse_error_keeps_leaf_mark_and_ordered_filesystem_route(te
     _write(env, "value: !include broken.yaml\n")
     _write(broken, "value: [unfinished\n")
 
-    with pytest.raises(yaml.parser.ParserError) as caught:
+    with pytest.raises(ParserError) as caught:
         load_yaml_file(main)
 
     error = caught.value
@@ -204,7 +205,13 @@ def test_nested_file_and_byte_budget_failures_include_the_child_source_route(
     _write(test_path / "v.yaml", f"value: {'x' * 64}\n")
 
     with pytest.raises(yaml.YAMLError, match=message) as caught:
-        load_yaml_file(main, **{limit_name: limit_value})
+        if limit_name == "max_include_files":
+            load_yaml_file(main, max_include_files=limit_value)
+        elif limit_name == "max_file_bytes":
+            load_yaml_file(main, max_file_bytes=limit_value)
+        else:
+            assert limit_name == "max_total_include_bytes"
+            load_yaml_file(main, max_total_include_bytes=limit_value)
 
     route = _route(caught.value)
     assert [frame.requested_path for frame in route] == ["env.yaml", "v.yaml"]
