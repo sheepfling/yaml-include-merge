@@ -32,7 +32,7 @@ def test_integer_limits_require_positive_exact_integers(field: str, value: objec
         JsonPathLimits(**cast(dict[str, int], {field: value}))
 
 
-@pytest.mark.parametrize("value", [None, True, False, 0, -1, "3", float("inf"), float("-inf"), float("nan")])
+@pytest.mark.parametrize("value", [None, True, False, 0, -1, "3", 10**1000, float("inf"), float("-inf"), float("nan")])
 def test_timeout_requires_positive_finite_number(value: object) -> None:
     with pytest.raises(ValueError, match="positive finite"):
         JsonPathLimits(timeout_seconds=cast(float, value))
@@ -188,6 +188,15 @@ def test_worker_start_failure_is_actionable(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setattr(_jsonpath.subprocess, "run", fail)
     with pytest.raises(ValueError, match="could not be started"):
         select_jsonpath(None, "$", DEFAULT_JSONPATH_LIMITS)
+
+
+def test_runtime_timeout_conversion_failure_is_actionable(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fail(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        raise OverflowError("timeout exceeds the operating system wait range")
+
+    monkeypatch.setattr(_jsonpath.subprocess, "run", fail)
+    with pytest.raises(ValueError, match="timeout cannot be represented by this runtime"):
+        select_jsonpath(None, "$", JsonPathLimits(timeout_seconds=1e100))
 
 
 @pytest.mark.parametrize(

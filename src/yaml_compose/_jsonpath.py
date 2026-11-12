@@ -50,7 +50,13 @@ class JsonPathLimits:
             if type(value) is not int or value <= 0:
                 raise ValueError(f"JSONPath {name} must be a positive integer")
         timeout = self.timeout_seconds
-        if type(timeout) not in (int, float) or not 0 < timeout < math.inf:
+        if type(timeout) not in (int, float):
+            raise ValueError("JSONPath timeout_seconds must be a positive finite number")
+        try:
+            representable_timeout = float(timeout)
+        except OverflowError as exc:
+            raise ValueError("JSONPath timeout_seconds must be a positive finite number") from exc
+        if not 0 < representable_timeout < math.inf:
             raise ValueError("JSONPath timeout_seconds must be a positive finite number")
 
 
@@ -202,6 +208,8 @@ def select_jsonpath(value: object, query: str, limits: JsonPathLimits) -> list[o
         except subprocess.TimeoutExpired as exc:
             # subprocess.run kills and reaps the worker before raising.
             raise ValueError(f"JSONPath execution timeout ({limits.timeout_seconds} seconds) exceeded") from exc
+        except OverflowError as exc:
+            raise ValueError("JSONPath execution timeout cannot be represented by this runtime") from exc
         except OSError as exc:
             raise ValueError("JSONPath worker could not be started") from exc
         if completed.returncode != 0:

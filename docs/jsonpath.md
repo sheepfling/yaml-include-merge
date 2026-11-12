@@ -32,8 +32,10 @@ inline: !jsonpath [{items: [one, two]}, '$.items[0]']
 steps: [start, !spread [!jsonpath [!include workflow.json, '$.steps[*]']], finish]
 ```
 
-`json_path` is supported by `!include`, `!include-all`, and `!include-table`; it cannot be
-combined with `json_pointer` in one include mapping. `!include-text` and `!include-raw` use
+`json_path` is supported by `!include`, `!include-all`, `!include-table`, and `!include-many`;
+it cannot be combined with `json_pointer` in one include mapping. `!include-many` applies the
+query separately to each completed file value and retains one nested nodelist per file.
+`!include-text` and `!include-raw` use
 their own line/byte-range options instead. The separate `!jsonpath` tag takes exactly two items.
 The query must be a literal YAML string, not another tag,
 a list, or a mapping. Quote queries to avoid YAML punctuation and implicit-scalar rules.
