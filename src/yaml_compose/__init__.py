@@ -1,5 +1,6 @@
 """Safe YAML loading with file includes and mapping overlays."""
 
+from ._jsonpath import DEFAULT_JSONPATH_LIMITS, JsonPathLimits
 from ._overlays import YamlType
 from ._search import IncludeSearch
 from ._unset import UNSET, UnsetType
@@ -57,6 +58,7 @@ from .tags import (
     INCLUDE_TABLE_TAG,
     INCLUDE_TAG,
     INCLUDE_TEXT_TAG,
+    JSONPATH_TAG,
     LOADER_DIRECTIVE,
     MERGE_KEY,
     MERGE_TAG,
@@ -68,12 +70,14 @@ __all__ = (
     "COMPOSE_LOADER_TAG",
     "DEEP_MERGE_KEY",
     "DEFAULT_INCLUDE_LIMITS",
+    "DEFAULT_JSONPATH_LIMITS",
     "DELETE_TAG",
     "INCLUDE_ALL_TAG",
     "INCLUDE_RAW_TAG",
     "INCLUDE_TABLE_TAG",
     "INCLUDE_TAG",
     "INCLUDE_TEXT_TAG",
+    "JSONPATH_TAG",
     "LOADER_DIRECTIVE",
     "MERGE_KEY",
     "MERGE_TAG",
@@ -102,6 +106,7 @@ __all__ = (
     "IncludeSearch",
     "IncludeSource",
     "IniAdapter",
+    "JsonPathLimits",
     "MemoryIncludeResolver",
     "MemoryRoot",
     "MemorySource",

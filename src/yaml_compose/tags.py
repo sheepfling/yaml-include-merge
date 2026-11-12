@@ -25,6 +25,9 @@ INCLUDE_RAW_TAG = "!include-raw"
 INCLUDE_TEXT_TAG = "!include-text"
 """Tag that includes a UTF-8 file as an unparsed string."""
 
+JSONPATH_TAG = "!jsonpath"
+"""Tag that selects a list of JSONPath matches from one structured value."""
+
 DELETE_TAG = "!delete"
 """Tag that removes an inherited mapping key."""
 
@@ -52,6 +55,7 @@ __all__ = (
     "INCLUDE_TABLE_TAG",
     "INCLUDE_TAG",
     "INCLUDE_TEXT_TAG",
+    "JSONPATH_TAG",
     "LOADER_DIRECTIVE",
     "MERGE_KEY",
     "MERGE_TAG",

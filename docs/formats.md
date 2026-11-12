@@ -2,7 +2,7 @@
 
 `yaml-compose` uses YAML as its composition language. An including YAML document owns the
 `!include`, `!include-all`, `!include-table`, `!include-text`, `!include-raw`, merge, `!delete`, `!replace`,
-and `!spread` operations. An included non-YAML document is parsed into its native Python value;
+`!jsonpath`, and `!spread` operations. An included non-YAML document is parsed into its native Python value;
 the package does not interpret YAML tags inside it.
 
 The default registry selects YAML for `.yaml` and `.yml`, strict JSON for `.json`, JSONC for
@@ -50,7 +50,8 @@ first_name: !include-table "people.csv#/1/0"
 steps: [prepare, !spread [!include "workflow.yaml#/steps"], finish]
 ```
 
-Selection is general, with no domain-specific names or expression language. It follows the
+JSON Pointer selection is general, with no domain-specific names or expression language.
+For explicit JSONPath queries, see [JSONPath selection](jsonpath.md). It follows the
 parsed value's shape across YAML, JSON, JSONC, JSON5, TOML, INI, dotenv, record formats, and
 registered adapters:
 

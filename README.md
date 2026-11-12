@@ -74,6 +74,21 @@ See [worked examples](docs/examples.md) for merge precedence, nested includes, s
 replacement, deletion, and list behavior. The [design notes](docs/design-notes.md) explain
 how the composition rules relate to YAML and PyYAML.
 
+## Select with JSONPath
+
+For filters, wildcards, slices, and multiple results, install `yaml-compose[jsonpath]` and use
+an explicit value selector:
+
+```yaml
+enabled: !jsonpath [!include catalog.json, '$.items[?@.enabled == true]']
+```
+
+`!jsonpath [source, query]` always returns a list, even with zero or one match. Its query is
+separate from the filename and from URI-fragment JSON Pointer selection. Sources can also
+use `!include-all`, `!include-table`, or inline JSON-compatible YAML values. See
+[JSONPath selection](docs/jsonpath.md) for strict syntax, supported values, resource limits,
+optional-dependency setup, and subprocess requirements.
+
 ## Include other files
 
 Use `!include` for structured data. The resolved filename selects the parser; YAML remains

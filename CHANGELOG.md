@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add optional explicit `!jsonpath [source, query]` selection using the strict RFC 9535 engine,
+  with always-list results, JSON-domain validation, configurable input/result bounds, and
+  isolated subprocess deadlines. Keep query text separate from include paths and fragments.
+
 - Add explicit `!include-all` for YAML document streams, always returning a document list
   before optional fragment selection. Keep ordinary `!include` single-document semantics,
   document-local anchors, complete-stream validation, and shared include budgets.

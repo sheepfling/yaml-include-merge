@@ -23,6 +23,7 @@ from yaml.error import MarkedYAMLError
 from yaml.resolver import BaseResolver
 
 from ._compat import _TypeVar
+from ._jsonpath import DEFAULT_JSONPATH_LIMITS, JsonPathLimits, select_jsonpath
 from ._overlays import DELETE as _DELETE
 from ._overlays import ReplaceMarker as _ReplaceMarker
 from ._overlays import SpreadMarker as _SpreadMarker
@@ -66,6 +67,7 @@ from .tags import (
     INCLUDE_TABLE_TAG,
     INCLUDE_TAG,
     INCLUDE_TEXT_TAG,
+    JSONPATH_TAG,
     LOADER_DIRECTIVE,
     MERGE_KEY,
     MERGE_TAG,
@@ -75,9 +77,11 @@ from .tags import (
 
 __all__ = (
     "DEFAULT_INCLUDE_LIMITS",
+    "DEFAULT_JSONPATH_LIMITS",
     "IncludeLimits",
     "IncludeLoader",
     "IncludeRouteFrame",
+    "JsonPathLimits",
     "YamlConfigLoader",
     "YamlDirective",
     "YamlIncludeError",
@@ -428,6 +432,7 @@ class IncludeLoader(SafeLoader):
         source: IncludeSource | None = None,
         yaml_loader: type[object] = SafeLoader,
         format_registry: FormatRegistry | None = None,
+        jsonpath_limits: JsonPathLimits = DEFAULT_JSONPATH_LIMITS,
         include_search: IncludeSearch = "local-first",
         allow_absolute_includes: bool = True,
         include_route: tuple[IncludeRouteFrame, ...] = (),
@@ -441,6 +446,9 @@ class IncludeLoader(SafeLoader):
         self.load_stack = tuple(load_stack)
         self.budget = budget
         self.yaml_loader = yaml_loader
+        if type(jsonpath_limits) is not JsonPathLimits:
+            raise TypeError("jsonpath_limits must be a JsonPathLimits profile")
+        self.jsonpath_limits = jsonpath_limits
         self.format_registry = (format_registry if format_registry is not None else FormatRegistry()).snapshot()
         self.include_search: IncludeSearch = validate_include_search(include_search)
         self.allow_absolute_includes = bool(allow_absolute_includes)
@@ -468,6 +476,39 @@ class IncludeLoader(SafeLoader):
     @staticmethod
     def _construct_include_text(loader: IncludeLoader, node: Node) -> str:
         return loader._include_text(node)
+
+    @staticmethod
+    def _construct_jsonpath(loader: IncludeLoader, node: Node) -> list[object]:
+        if not isinstance(node, SequenceNode) or len(node.value) != 2:
+            raise ConstructorError(
+                f"while constructing {JSONPATH_TAG}",
+                None,
+                f"{JSONPATH_TAG} expects [source, query]",
+                node.start_mark,
+            )
+        source_node, query_node = node.value
+        if not isinstance(query_node, ScalarNode) or query_node.tag != BaseResolver.DEFAULT_SCALAR_TAG:
+            raise ConstructorError(
+                f"while constructing {JSONPATH_TAG}",
+                node.start_mark,
+                f"{JSONPATH_TAG} query must be a string",
+                query_node.start_mark,
+            )
+        source = _construct_object(loader, source_node)
+        include_route = loader._include_routes_by_node.get(source_node)
+        if include_route is not None:
+            loader._include_routes_by_node[node] = include_route
+        try:
+            return select_jsonpath(source, query_node.value, loader.jsonpath_limits)
+        except (ValueError, TypeError, RuntimeError) as exc:
+            error = ConstructorError(
+                f"while constructing {JSONPATH_TAG}",
+                node.start_mark,
+                f"cannot select JSONPath {query_node.value!r}: {exc}",
+                query_node.start_mark,
+            )
+            loader._attach_node_include_route(error, source_node)
+            raise error from exc
 
     @staticmethod
     def _construct_delete(loader: IncludeLoader, node: Node) -> object:
@@ -874,6 +915,7 @@ class IncludeLoader(SafeLoader):
                             include_resolver=self.include_resolver,
                             yaml_loader=self.yaml_loader,
                             format_registry=self.format_registry,
+                            jsonpath_limits=self.jsonpath_limits,
                             include_search=self.include_search,
                             allow_absolute_includes=self.allow_absolute_includes,
                             include_route=route,
@@ -1001,7 +1043,12 @@ class IncludeLoader(SafeLoader):
                     )
                 merge_deep = is_deep
                 source_mappings: list[YamlDict] = []
-                source_nodes = value_node.value if isinstance(value_node, SequenceNode) else [value_node]
+                # A JSONPath sequence is constructor arguments, not a merge-source list.
+                source_nodes = (
+                    value_node.value
+                    if isinstance(value_node, SequenceNode) and value_node.tag != JSONPATH_TAG
+                    else [value_node]
+                )
                 merge_source_nodes = list(source_nodes)
                 for source_node in source_nodes:
                     value = _construct_object(self, source_node)
@@ -1111,6 +1158,10 @@ IncludeLoader.add_constructor(
     IncludeLoader._construct_include_text,  # pyright: ignore[reportPrivateUsage]
 )
 IncludeLoader.add_constructor(
+    JSONPATH_TAG,
+    IncludeLoader._construct_jsonpath,  # pyright: ignore[reportPrivateUsage]
+)
+IncludeLoader.add_constructor(
     DELETE_TAG,
     IncludeLoader._construct_delete,  # pyright: ignore[reportPrivateUsage]
 )
@@ -1146,6 +1197,7 @@ def _load_composed_text(
     include_resolver: IncludeResolver,
     yaml_loader: type[object],
     format_registry: FormatRegistry,
+    jsonpath_limits: JsonPathLimits = DEFAULT_JSONPATH_LIMITS,
     include_search: IncludeSearch,
     allow_absolute_includes: bool,
     include_route: tuple[IncludeRouteFrame, ...] = (),
@@ -1164,6 +1216,7 @@ def _load_composed_text(
         include_resolver=include_resolver,
         yaml_loader=yaml_loader,
         format_registry=format_registry,
+        jsonpath_limits=jsonpath_limits,
         include_search=include_search,
         allow_absolute_includes=allow_absolute_includes,
         include_route=include_route,
@@ -1198,6 +1251,7 @@ def load_yaml_dispatch(
     allowed_roots: Iterable[str | os.PathLike[str] | IncludeRoot] | None = None,
     include_resolver: IncludeResolver | None = None,
     format_registry: None = None,
+    jsonpath_limits: JsonPathLimits = DEFAULT_JSONPATH_LIMITS,
     include_search: IncludeSearch = "local-first",
     allow_absolute_includes: bool = True,
     include_limits: IncludeLimits | UnsetType = UNSET,
@@ -1223,6 +1277,7 @@ def load_yaml_dispatch(
     include_resolver: IncludeResolver | None = None,
     yaml_loader: type[object] = SafeLoader,
     format_registry: FormatRegistry | None = None,
+    jsonpath_limits: JsonPathLimits = DEFAULT_JSONPATH_LIMITS,
     include_search: IncludeSearch = "local-first",
     allow_absolute_includes: bool = True,
     include_limits: IncludeLimits | UnsetType = UNSET,
@@ -1247,6 +1302,7 @@ def load_yaml_dispatch(
     include_resolver: IncludeResolver | None = None,
     yaml_loader: type[object] = SafeLoader,
     format_registry: FormatRegistry | None = None,
+    jsonpath_limits: JsonPathLimits = DEFAULT_JSONPATH_LIMITS,
     include_search: IncludeSearch = "local-first",
     allow_absolute_includes: bool = True,
     include_limits: IncludeLimits | UnsetType = UNSET,
@@ -1301,10 +1357,13 @@ def load_yaml_dispatch(
     active process-wide defaults. Explicit ``max_*`` values override
     only their matching profile fields, and ``None`` disables that bound. Each
     top-level call gets a fresh byte/count budget. Included YAML errors retain
-    source marks.
+    source marks. ``jsonpath_limits`` bounds each explicit ``!jsonpath`` selection
+    separately and is inherited by nested includes.
     """
     validate_yaml_loader(yaml_loader)
     validate_include_search(include_search)
+    if type(jsonpath_limits) is not JsonPathLimits:
+        raise TypeError("jsonpath_limits must be a JsonPathLimits profile")
     limits = resolve_include_limits(
         max_include_depth,
         max_include_files,
@@ -1396,6 +1455,7 @@ def load_yaml_dispatch(
         include_resolver=resolver,
         yaml_loader=yaml_loader,
         format_registry=formats,
+        jsonpath_limits=jsonpath_limits,
         include_search=include_search,
         allow_absolute_includes=allow_absolute_includes,
     )
@@ -1414,6 +1474,7 @@ def load_yaml_compose(
     allowed_roots: Iterable[str | os.PathLike[str] | IncludeRoot] | None = None,
     include_resolver: IncludeResolver | None = None,
     format_registry: None = None,
+    jsonpath_limits: JsonPathLimits = DEFAULT_JSONPATH_LIMITS,
     include_search: IncludeSearch = "local-first",
     allow_absolute_includes: bool = True,
     include_limits: IncludeLimits | UnsetType = UNSET,
@@ -1437,6 +1498,7 @@ def load_yaml_compose(
     include_resolver: IncludeResolver | None = None,
     yaml_loader: type[object] = SafeLoader,
     format_registry: FormatRegistry | None = None,
+    jsonpath_limits: JsonPathLimits = DEFAULT_JSONPATH_LIMITS,
     include_search: IncludeSearch = "local-first",
     allow_absolute_includes: bool = True,
     include_limits: IncludeLimits | UnsetType = UNSET,
@@ -1459,6 +1521,7 @@ def load_yaml_compose(
     include_resolver: IncludeResolver | None = None,
     yaml_loader: type[object] = SafeLoader,
     format_registry: FormatRegistry | None = None,
+    jsonpath_limits: JsonPathLimits = DEFAULT_JSONPATH_LIMITS,
     include_search: IncludeSearch = "local-first",
     allow_absolute_includes: bool = True,
     include_limits: IncludeLimits | UnsetType = UNSET,
@@ -1486,6 +1549,7 @@ def load_yaml_compose(
         include_resolver=include_resolver,
         yaml_loader=yaml_loader,
         format_registry=format_registry,
+        jsonpath_limits=jsonpath_limits,
         include_search=include_search,
         allow_absolute_includes=allow_absolute_includes,
         include_limits=include_limits,
@@ -1505,6 +1569,7 @@ def load_yaml_file(
     allowed_roots: Iterable[str | os.PathLike[str] | IncludeRoot] | None = None,
     include_resolver: IncludeResolver | None = None,
     format_registry: None = None,
+    jsonpath_limits: JsonPathLimits = DEFAULT_JSONPATH_LIMITS,
     include_search: IncludeSearch = "local-first",
     allow_absolute_includes: bool = True,
     recursive_dispatch: bool = True,
@@ -1526,6 +1591,7 @@ def load_yaml_file(
     include_resolver: IncludeResolver | None = None,
     yaml_loader: type[object] = SafeLoader,
     format_registry: FormatRegistry | None = None,
+    jsonpath_limits: JsonPathLimits = DEFAULT_JSONPATH_LIMITS,
     include_search: IncludeSearch = "local-first",
     allow_absolute_includes: bool = True,
     recursive_dispatch: bool = True,
@@ -1546,6 +1612,7 @@ def load_yaml_file(
     include_resolver: IncludeResolver | None = None,
     yaml_loader: type[object] = SafeLoader,
     format_registry: FormatRegistry | None = None,
+    jsonpath_limits: JsonPathLimits = DEFAULT_JSONPATH_LIMITS,
     include_search: IncludeSearch = "local-first",
     allow_absolute_includes: bool = True,
     recursive_dispatch: bool = True,
@@ -1585,6 +1652,7 @@ def load_yaml_file(
             include_resolver=include_resolver,
             yaml_loader=yaml_loader,
             format_registry=format_registry,
+            jsonpath_limits=jsonpath_limits,
             include_search=include_search,
             allow_absolute_includes=allow_absolute_includes,
             include_limits=include_limits,
@@ -1610,6 +1678,7 @@ class YamlConfigLoader(Generic[_LoaderValue_co]):
         *,
         include_resolver: IncludeResolver | None = None,
         format_registry: None = None,
+        jsonpath_limits: JsonPathLimits = DEFAULT_JSONPATH_LIMITS,
         include_search: IncludeSearch = "local-first",
         allow_absolute_includes: bool = True,
         search_paths: Iterable[str | os.PathLike[str] | IncludeRoot] | None = None,
@@ -1629,6 +1698,7 @@ class YamlConfigLoader(Generic[_LoaderValue_co]):
         include_resolver: IncludeResolver | None = None,
         yaml_loader: type[object],
         format_registry: FormatRegistry | None = None,
+        jsonpath_limits: JsonPathLimits = DEFAULT_JSONPATH_LIMITS,
         include_search: IncludeSearch = "local-first",
         allow_absolute_includes: bool = True,
         search_paths: Iterable[str | os.PathLike[str] | IncludeRoot] | None = None,
@@ -1648,6 +1718,7 @@ class YamlConfigLoader(Generic[_LoaderValue_co]):
         include_resolver: IncludeResolver | None = None,
         yaml_loader: type[object] = SafeLoader,
         format_registry: FormatRegistry,
+        jsonpath_limits: JsonPathLimits = DEFAULT_JSONPATH_LIMITS,
         include_search: IncludeSearch = "local-first",
         allow_absolute_includes: bool = True,
         search_paths: Iterable[str | os.PathLike[str] | IncludeRoot] | None = None,
@@ -1666,6 +1737,7 @@ class YamlConfigLoader(Generic[_LoaderValue_co]):
         include_resolver: IncludeResolver | None = None,
         yaml_loader: type[object] = SafeLoader,
         format_registry: FormatRegistry | None = None,
+        jsonpath_limits: JsonPathLimits = DEFAULT_JSONPATH_LIMITS,
         include_search: IncludeSearch = "local-first",
         allow_absolute_includes: bool = True,
         search_paths: Iterable[str | os.PathLike[str] | IncludeRoot] | None = None,
@@ -1686,6 +1758,7 @@ class YamlConfigLoader(Generic[_LoaderValue_co]):
         include_resolver: IncludeResolver | None = None,
         yaml_loader: type[object] = SafeLoader,
         format_registry: FormatRegistry | None = None,
+        jsonpath_limits: JsonPathLimits = DEFAULT_JSONPATH_LIMITS,
         include_search: IncludeSearch = "local-first",
         allow_absolute_includes: bool = True,
         search_paths: Iterable[str | os.PathLike[str] | IncludeRoot] | None = None,
@@ -1720,11 +1793,15 @@ class YamlConfigLoader(Generic[_LoaderValue_co]):
         calls. The default registry contains YAML, JSON-family, TOML, CSV, INI,
         and dotenv adapters. CSV is selected with ``!include-table``. The
         ``!include-text`` and ``!include-raw`` tags use the same resolver and
-        budgets without parsing the selected source format.
+        budgets without parsing the selected source format. ``jsonpath_limits`` supplies
+        an immutable per-selection policy for the optional ``!jsonpath`` tag.
         """
         validate_yaml_loader(yaml_loader)
         self.include_resolver = include_resolver
         self.yaml_loader = yaml_loader
+        if type(jsonpath_limits) is not JsonPathLimits:
+            raise TypeError("jsonpath_limits must be a JsonPathLimits profile")
+        self.jsonpath_limits = jsonpath_limits
         self.format_registry = (format_registry if format_registry is not None else FormatRegistry()).snapshot()
         self.include_search: IncludeSearch = validate_include_search(include_search)
         self.allow_absolute_includes = bool(allow_absolute_includes)
@@ -1790,6 +1867,7 @@ class YamlConfigLoader(Generic[_LoaderValue_co]):
             include_resolver=self.include_resolver,
             yaml_loader=self.yaml_loader,
             format_registry=self.format_registry,
+            jsonpath_limits=self.jsonpath_limits,
             include_search=self.include_search,
             allow_absolute_includes=self.allow_absolute_includes,
             recursive_dispatch=self.recursive_dispatch,
@@ -1840,6 +1918,7 @@ class YamlConfigLoader(Generic[_LoaderValue_co]):
             include_resolver=self.include_resolver,
             yaml_loader=self.yaml_loader,
             format_registry=self.format_registry,
+            jsonpath_limits=self.jsonpath_limits,
             include_search=self.include_search,
             allow_absolute_includes=self.allow_absolute_includes,
             include_limits=self.include_limits,
@@ -1884,6 +1963,7 @@ class YamlConfigLoader(Generic[_LoaderValue_co]):
             include_resolver=self.include_resolver,
             yaml_loader=self.yaml_loader,
             format_registry=self.format_registry,
+            jsonpath_limits=self.jsonpath_limits,
             include_search=self.include_search,
             allow_absolute_includes=self.allow_absolute_includes,
             include_limits=self.include_limits,
