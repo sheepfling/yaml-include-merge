@@ -60,6 +60,13 @@ def test_invalid_object_shape_is_a_marked_error(tag: str, shape: str) -> None:
     [
         "!include {path: x, path: y}",
         "!include {path: x, unknown: true}",
+        "!include {path: x, sources: [y]}",
+        "!include {path: x, sources: []}",
+        "!include {sources: []}",
+        "!include {paths: [x]}",
+        "!include-table {sources: [x]}",
+        "!include-text {sources: [x]}",
+        "!include-raw {sources: [x]}",
         "!include {path: x, json_pointer: /a, json_path: '$.a'}",
         "!include {path: x, json_pointer: '#/a'}",
         "!include {path: x, json_pointer: /bad~2}",
@@ -81,6 +88,8 @@ def test_invalid_object_shape_is_a_marked_error(tag: str, shape: str) -> None:
         "!include {path: x, documents: first}",
         "!include {path: x, documents: all, documents: single}",
         "!include {path: x, documents: !include mode.yaml}",
+        "!include-table {path: x, json_pointer: /0}",
+        "!include-table {path: x, json_path: '$'}",
         "!include-table {path: x, documents: all}",
         "!include-table {path: x, documents: single}",
         "!include-text {path: x, documents: all}",
@@ -189,14 +198,14 @@ def test_raw_byte_ranges_are_zero_based_and_clip_at_eof(options: dict[str, int],
     assert load_object("!include-raw", {"path": "data", **options}, {"data": b"\x00\xffabcdef"}) == expected
 
 
-@pytest.mark.parametrize("tag,documents", [("!include", None), ("!include", "all"), ("!include-table", None)])
+@pytest.mark.parametrize("tag,documents", [("!include", None), ("!include", "all")])
 def test_mapping_jsonpath_preserves_nodelist_semantics_and_configured_limits(
     monkeypatch: pytest.MonkeyPatch, tag: str, documents: str | None
 ) -> None:
     limits = JsonPathLimits(max_matches=3)
-    expected = [["a", "b"]] if tag == "!include-table" else [{"a": 1}] if documents == "all" else {"a": 1}
-    source = "a,b\n" if tag == "!include-table" else "a: 1\n"
-    path = "data.csv" if tag == "!include-table" else "data.yaml"
+    expected = [{"a": 1}] if documents == "all" else {"a": 1}
+    source = "a: 1\n"
+    path = "data.yaml"
     calls: list[tuple[object, str, JsonPathLimits]] = []
 
     def select(value: object, query: str, profile: JsonPathLimits) -> list[object]:

@@ -64,12 +64,10 @@ from .tags import (
     COMPOSE_LOADER_TAG,
     DEEP_MERGE_KEY,
     DELETE_TAG,
-    INCLUDE_MANY_TAG,
     INCLUDE_RAW_TAG,
     INCLUDE_TABLE_TAG,
     INCLUDE_TAG,
     INCLUDE_TEXT_TAG,
-    JSONPATH_TAG,
     LOADER_DIRECTIVE,
     MERGE_KEY,
     MERGE_TAG,
@@ -463,6 +461,10 @@ class IncludeLoader(SafeLoader):
 
     @staticmethod
     def _construct_include(loader: IncludeLoader, node: Node) -> object:
+        if isinstance(node, MappingNode) and any(
+            isinstance(key, ScalarNode) and key.value == "sources" for key, _ in node.value
+        ):
+            return construct_include_many(loader, node)
         return loader._include(node)
 
     @staticmethod
@@ -476,39 +478,6 @@ class IncludeLoader(SafeLoader):
     @staticmethod
     def _construct_include_text(loader: IncludeLoader, node: Node) -> str:
         return loader._include_text(node)
-
-    @staticmethod
-    def _construct_jsonpath(loader: IncludeLoader, node: Node) -> list[object]:
-        if not isinstance(node, SequenceNode) or len(node.value) != 2:
-            raise ConstructorError(
-                f"while constructing {JSONPATH_TAG}",
-                None,
-                f"{JSONPATH_TAG} expects [source, query]",
-                node.start_mark,
-            )
-        source_node, query_node = node.value
-        if not isinstance(query_node, ScalarNode) or query_node.tag != BaseResolver.DEFAULT_SCALAR_TAG:
-            raise ConstructorError(
-                f"while constructing {JSONPATH_TAG}",
-                node.start_mark,
-                f"{JSONPATH_TAG} query must be a string",
-                query_node.start_mark,
-            )
-        source = _construct_object(loader, source_node)
-        include_route = loader._include_routes_by_node.get(source_node)
-        if include_route is not None:
-            loader._include_routes_by_node[node] = include_route
-        try:
-            return select_jsonpath(source, query_node.value, loader.jsonpath_limits)
-        except (ValueError, TypeError, RuntimeError) as exc:
-            error = ConstructorError(
-                f"while constructing {JSONPATH_TAG}",
-                node.start_mark,
-                f"cannot select JSONPath {query_node.value!r}: {exc}",
-                query_node.start_mark,
-            )
-            loader._attach_node_include_route(error, source_node)
-            raise error from exc
 
     @staticmethod
     def _construct_delete(loader: IncludeLoader, node: Node) -> object:
@@ -1081,12 +1050,7 @@ class IncludeLoader(SafeLoader):
                     )
                 merge_deep = is_deep
                 source_mappings: list[YamlDict] = []
-                # A JSONPath sequence is constructor arguments, not a merge-source list.
-                source_nodes = (
-                    value_node.value
-                    if isinstance(value_node, SequenceNode) and value_node.tag != JSONPATH_TAG
-                    else [value_node]
-                )
+                source_nodes = value_node.value if isinstance(value_node, SequenceNode) else [value_node]
                 merge_source_nodes = list(source_nodes)
                 for source_node in source_nodes:
                     value = _construct_object(self, source_node)
@@ -1177,11 +1141,9 @@ class IncludeLoader(SafeLoader):
 
 for _tag, _constructor in (
     (INCLUDE_TAG, IncludeLoader._construct_include),  # pyright: ignore[reportPrivateUsage]
-    (INCLUDE_MANY_TAG, construct_include_many),
     (INCLUDE_TABLE_TAG, IncludeLoader._construct_include_table),  # pyright: ignore[reportPrivateUsage]
     (INCLUDE_RAW_TAG, IncludeLoader._construct_include_raw),  # pyright: ignore[reportPrivateUsage]
     (INCLUDE_TEXT_TAG, IncludeLoader._construct_include_text),  # pyright: ignore[reportPrivateUsage]
-    (JSONPATH_TAG, IncludeLoader._construct_jsonpath),  # pyright: ignore[reportPrivateUsage]
     (DELETE_TAG, IncludeLoader._construct_delete),  # pyright: ignore[reportPrivateUsage]
     (SPREAD_TAG, IncludeLoader._construct_spread),  # pyright: ignore[reportPrivateUsage]
     (REPLACE_TAG, IncludeLoader._construct_replace),  # pyright: ignore[reportPrivateUsage]
@@ -1372,7 +1334,7 @@ def load_yaml_dispatch(
     active process-wide defaults. Explicit ``max_*`` values override
     only their matching profile fields, and ``None`` disables that bound. Each
     top-level call gets a fresh byte/count budget. Included YAML errors retain
-    source marks. ``jsonpath_limits`` bounds each explicit ``!jsonpath`` selection
+    source marks. ``jsonpath_limits`` bounds each explicit ``json_path`` selection
     separately and is inherited by nested includes.
     """
     validate_yaml_loader(yaml_loader)
@@ -1810,7 +1772,7 @@ class YamlConfigLoader(Generic[_LoaderValue_co]):
         and dotenv adapters. CSV is selected with ``!include-table``. The
         ``!include-text`` and ``!include-raw`` tags use the same resolver and
         budgets without parsing the selected source format. ``jsonpath_limits`` supplies
-        an immutable per-selection policy for the optional ``!jsonpath`` tag.
+        an immutable per-selection policy for optional ``!include`` JSONPath selection.
         """
         validate_yaml_loader(yaml_loader)
         self.include_resolver = include_resolver

@@ -1,7 +1,7 @@
 # JSONPath selection
 
-`json_path` on a structured include mapping, or `!jsonpath [source, query]`, selects a list
-of values from a fully constructed source. It is a
+`json_path` on an `!include` options mapping selects a list of values from a fully
+constructed source. It is a
 separate operation from JSON Pointer: its query is never appended to, parsed out of, or
 percent-decoded as part of a filename. Install the optional engine in the Python environment
 running yaml-compose:
@@ -27,21 +27,18 @@ installation command. Ordinary includes and JSON Pointers do not require this ex
 enabled: !include {path: catalog.json, json_path: '$.items[?@.enabled == true]'}
 names: !include {path: catalog.json, json_path: '$.items[*].name'}
 recent: !include {documents: all, path: events.yaml, json_path: '$[-3:]'}
-first_cells: !include-table {path: people.csv, json_path: '$[*][0]'}
-inline: !jsonpath [{items: [one, two]}, '$.items[0]']
-steps: [start, !spread [!jsonpath [!include workflow.json, '$.steps[*]']], finish]
+steps: [start, !spread [!include {path: workflow.json, json_path: '$.steps[*]'}], finish]
 ```
 
-`json_path` is supported by `!include`, `!include-table`, and `!include-many`;
-it cannot be combined with `json_pointer` in one include mapping. `!include-many` applies the
-query separately to each completed file value and retains one nested nodelist per file.
-`!include-text` and `!include-raw` use
-their own line/byte-range options instead. The separate `!jsonpath` tag takes exactly two items.
-The query must be a literal YAML string, not another tag,
-a list, or a mapping. Quote queries to avoid YAML punctuation and implicit-scalar rules.
-Sources can be includes, inline values, or anchors. The source is completely parsed and its
-nested composition finished before selection; malformed unselected data still fails. Include
-roots, search order, resolver identity, cycle checks, and file/count/byte budgets are unchanged.
+`json_path` is supported only by `!include` and cannot be combined with `json_pointer`.
+With `sources`, the query applies separately to each completed file value, retaining one
+nested nodelist per file. Text and raw includes have line/byte-range options instead;
+table includes do not accept JSON selectors. There is no inline query directive.
+The query must be a literal YAML string, not another tag, list, or mapping. Quote queries
+to avoid YAML punctuation and implicit-scalar rules. Each source is completely parsed
+and its nested composition finished before selection; malformed unselected data still
+fails. Include roots, search order, resolver identity, cycle checks, and file/count/byte
+budgets are unchanged.
 
 The result is always a list: zero matches give `[]`, one match gives `[value]`, and multiple
 matches give `[value1, value2, ...]`. Missing members and out-of-range indexes follow JSONPath's
@@ -58,12 +55,13 @@ That document-list root is retained for zero, one, or many YAML documents. `$[1:
 the second and third documents, `$[-2:]` the last two, and `$[::-1]` all documents in reverse
 order. `$` matches the entire document list as one nested value; `$[:]` matches each document.
 If a document is itself an array, it stays nested unless the query explicitly selects inside it.
-For `!include-many` with `documents: all`, each query sees one file's document list and the
-outer result retains one nodelist per file, including empty lists. Slicing that outer file
-collection is a separate operation using `!jsonpath [!include-many {...}, query]`.
+For `!include` with `sources` and `documents: all`, each query sees one file's document list
+and the outer result retains one nodelist per file, including empty lists. Selection across
+that outer file collection is not supported.
 
 `!spread` explicitly inserts matched values into an outer list. A result list is not an
-implicit mapping merge: `<<<: !jsonpath [...]` is an error even with exactly one mapping match.
+implicit mapping merge: `<<<: !include {path: data.json, json_path: '$'}` is an error
+even with exactly one mapping match.
 Use JSON Pointer when one known mapping is needed for a merge. Invalid query syntax, wrong
 source types, missing dependencies, and exhausted limits are errors, never partial results.
 Errors identify the query and YAML mark and preserve a directly included source's include route.
@@ -79,8 +77,7 @@ keys or changing YAML-only values to fit JSON semantics.
 Cyclic YAML aliases are rejected. Repeated non-cyclic aliases are allowed but each expansion
 counts toward the input limits. Evaluation uses a serialized snapshot; matches are returned
 as ordinary JSON-compatible Python values without preserving source object or alias identity.
-The separate `!jsonpath` tag can query a text include as a string scalar; raw bytes are outside
-this input domain. Text include mappings themselves do not accept JSON selector fields.
+Raw bytes are outside this input domain. Text include mappings do not accept JSON selectors.
 
 ## Evaluation limits and process requirements
 
@@ -89,7 +86,12 @@ Each selection uses a fresh isolated Python subprocess. It runs the same interpr
 `PYTHONPATH`, the current directory, or user-site packages. Standard virtual environments are
 supported. The runtime must permit launching a Python subprocess and reading the packaged
 worker file. Embedded or frozen Python applications without that capability are not supported.
-There is startup and serialization overhead for every query; this is not a streaming reader.
+The subprocess provides a killable execution deadline, not a speed optimization. There is
+startup and serialization overhead for every query; this is not a streaming reader.
+
+Source-byte limits bound reading the original file. Separately, `JsonPathLimits` bounds the
+parsed value presented to the query and its results: aliases can expand and a small query
+can select large or repeated values. These are distinct budgets, not duplicate file limits.
 
 The default immutable `JsonPathLimits` profile is:
 

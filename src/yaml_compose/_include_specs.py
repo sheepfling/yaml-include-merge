@@ -11,11 +11,11 @@ from yaml.constructor import SafeConstructor
 from yaml.resolver import BaseResolver
 
 from ._selectors import validate_json_pointer
-from .tags import INCLUDE_MANY_TAG, INCLUDE_RAW_TAG, INCLUDE_TAG, INCLUDE_TEXT_TAG
+from .tags import INCLUDE_RAW_TAG, INCLUDE_TAG, INCLUDE_TEXT_TAG
 
 _OptionName = Literal[
     "path",
-    "paths",
+    "sources",
     "glob",
     "documents",
     "json_pointer",
@@ -115,10 +115,9 @@ def parse_include_spec(node: Node, *, tag: str) -> IncludeSpec:
         allowed.update(("encoding", "lines"))
     elif tag == INCLUDE_RAW_TAG:
         allowed.update(("offset", "length"))
-    else:
+    elif tag == INCLUDE_TAG:
         allowed.update(_SELECTOR_OPTIONS)
-        if tag == INCLUDE_TAG:
-            allowed.add("documents")
+        allowed.add("documents")
     if not isinstance(node, MappingNode):
         raise ValueError(f"{tag} expects a scalar path or an options mapping")
     options = _mapping(node, name=tag, allowed=frozenset(allowed), tagged=True)
@@ -178,15 +177,17 @@ def parse_many_include_spec(node: Node) -> ManyIncludeSpec:
     """Validate an object-only source collection without constructing custom tags."""
     options = _mapping(
         node,
-        name=INCLUDE_MANY_TAG,
-        allowed=frozenset[_OptionName](("paths", "documents")) | _SELECTOR_OPTIONS,
+        name=INCLUDE_TAG,
+        allowed=frozenset[_OptionName](("path", "sources", "documents")) | _SELECTOR_OPTIONS,
         tagged=True,
     )
-    if "paths" not in options:
-        raise ValueError(f"{INCLUDE_MANY_TAG} requires a paths option")
-    paths = options["paths"]
+    if "path" in options or "sources" not in options:
+        raise ValueError("!include requires exactly one of path or sources")
+    paths = options["sources"]
     if not isinstance(paths, SequenceNode) or paths.tag != BaseResolver.DEFAULT_SEQUENCE_TAG:
-        raise ValueError("paths must be a sequence of literal paths or explicit glob mappings")
+        raise ValueError("sources must be a sequence of literal paths or explicit glob mappings")
+    if not paths.value:
+        raise ValueError("sources must be a non-empty sequence")
     sources: list[ManySource] = []
     for entry in paths.value:
         if isinstance(entry, MappingNode):

@@ -3,7 +3,9 @@
 Keep this module independent of yaml_compose imports: the parent locates its
 packaged resource, while ``python -I`` deliberately ignores the working
 directory and PYTHONPATH. The optional engine must be installed in the active
-interpreter's environment.
+interpreter's environment. This boundary permits the parent to terminate an
+expensive query at its deadline; it is not a speed optimization or OS sandbox.
+JSON Pointer does not use this worker or require an optional dependency.
 """
 
 from __future__ import annotations

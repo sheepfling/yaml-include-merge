@@ -83,9 +83,8 @@ an explicit value selector:
 enabled: !include {path: catalog.json, json_path: '$.items[?@.enabled == true]'}
 ```
 
-`json_path` always returns a list, even with zero or one match. It is also available on
-`!include-many` and `!include-table`. Use `!jsonpath [source, query]` to query an inline value
-or a separately composed source. JSONPath and JSON Pointer are explicit, separate options. See
+`json_path` always returns a list, even with zero or one match. JSONPath and JSON Pointer
+are mutually exclusive options on `!include`, separate from the literal path. See
 [JSONPath selection](docs/jsonpath.md) for strict syntax, supported values, resource limits,
 optional-dependency setup, and subprocess requirements.
 
@@ -139,12 +138,13 @@ See [YAML streams](docs/formats.md#yaml-document-streams).
 
 ## Collect several files
 
-Use object-only `!include-many` for an ordered list of structured sources. Patterns expand
+Use `!include` with a nonempty `sources` list for ordered structured sources. Supply exactly
+one of `path` or `sources`. Patterns expand
 only in explicit `glob` entries; ordinary strings and `path` entries remain literal:
 
 ```yaml
-configs: !include-many
-  paths: [base.yaml, {path: 'special#blue.yaml'}, {glob: 'profiles/*.yaml'}]
+configs: !include
+  sources: [base.yaml, {path: 'special#blue.yaml'}, {glob: 'profiles/*.yaml'}]
   json_pointer: /service
 ```
 

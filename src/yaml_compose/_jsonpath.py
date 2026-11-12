@@ -23,6 +23,11 @@ class JsonPathLimits:
     JSON serialization, including escaping and punctuation; the query limit
     counts UTF-8 bytes. Output bytes include the enclosing result array.
 
+    IncludeLimits bounds source reads and include traversal. These separate
+    limits bound the parsed query input and generated matches: a small source
+    can expand aliases or produce many repeated matches. They do not replace
+    the source limits.
+
     The timeout is a subprocess execution deadline, including imports and
     compilation. Input validation runs before that deadline. These bounds
     are resource controls, not a hard memory guarantee or an OS sandbox.

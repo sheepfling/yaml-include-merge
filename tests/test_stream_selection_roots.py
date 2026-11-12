@@ -14,7 +14,7 @@ from yaml_compose import JsonPathLimits, MemoryIncludeResolver, MemoryRoot, load
 def _load_stream(content: str, query: str, *, many: bool, recursive: bool = True) -> object:
     root = MemoryRoot("stream-selection")
     options = (
-        "!include-many {paths: [bundle.yaml], documents: all" if many else "!include {documents: all, path: bundle.yaml"
+        "!include {sources: [bundle.yaml], documents: all" if many else "!include {documents: all, path: bundle.yaml"
     )
     return load_yaml_compose(
         StringIO(options + ", json_path: " + json.dumps(query) + "}"),
@@ -87,10 +87,15 @@ def test_real_jsonpath_slices_each_file_stream_without_slicing_file_collection()
     _require_engine()
     root = MemoryRoot("stream-files")
     assert load_yaml_compose(
-        StringIO("!include-many {paths: [a.yaml, b.yaml, empty.yaml], documents: all, json_path: '$[1:]'}"),
+        StringIO("!include {sources: [a.yaml, b.yaml, empty.yaml], documents: all, json_path: '$[1:]'}"),
         allowed_roots=[root],
         include_resolver=MemoryIncludeResolver(
-            root, {"a.yaml": "x: 0\n---\nx: 1\n---\nx: 2\n", "b.yaml": "x: 3\n", "empty.yaml": ""}
+            root,
+            {
+                "a.yaml": "x: 0\n---\nx: 1\n---\nx: 2\n",
+                "b.yaml": "x: 3\n",
+                "empty.yaml": "",
+            },
         ),
     ) == [[{"x": 1}, {"x": 2}], [], []]
 
@@ -108,14 +113,16 @@ def test_real_jsonpath_can_select_explicitly_from_outer_file_collection(query: s
     root = MemoryRoot("outer-selection")
     assert (
         load_yaml_compose(
-            StringIO(
-                "!jsonpath [!include-many {paths: [a.yaml, b.yaml, empty.yaml], documents: all}, "
-                + json.dumps(query)
-                + "]"
-            ),
+            StringIO("!include {path: aggregate.yaml, json_path: " + json.dumps(query) + "}"),
             allowed_roots=[root],
             include_resolver=MemoryIncludeResolver(
-                root, {"a.yaml": "x: 0\n---\nx: 1\n---\nx: 2\n", "b.yaml": "x: 3\n", "empty.yaml": ""}
+                root,
+                {
+                    "aggregate.yaml": "!include {sources: [a.yaml, b.yaml, empty.yaml], documents: all}",
+                    "a.yaml": "x: 0\n---\nx: 1\n---\nx: 2\n",
+                    "b.yaml": "x: 3\n",
+                    "empty.yaml": "",
+                },
             ),
         )
         == selected
@@ -136,7 +143,7 @@ def test_stream_slice_does_not_hide_late_parse_errors(monkeypatch: pytest.Monkey
 def test_stream_slice_charges_complete_selection_input(many: bool) -> None:
     root = MemoryRoot("stream-budget")
     options = (
-        "!include-many {paths: [bundle.yaml], documents: all" if many else "!include {documents: all, path: bundle.yaml"
+        "!include {sources: [bundle.yaml], documents: all" if many else "!include {documents: all, path: bundle.yaml"
     )
     with pytest.raises(yaml.YAMLError, match="maximum input nodes"):
         load_yaml_compose(

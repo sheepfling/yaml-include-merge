@@ -10,12 +10,10 @@ from yaml.constructor import ConstructorError
 
 from .tags import (
     DELETE_TAG,
-    INCLUDE_MANY_TAG,
     INCLUDE_RAW_TAG,
     INCLUDE_TABLE_TAG,
     INCLUDE_TAG,
     INCLUDE_TEXT_TAG,
-    JSONPATH_TAG,
     MERGE_KEY,
     MERGE_TAG,
     REPLACE_TAG,
@@ -113,11 +111,9 @@ def configured_include_loader(yaml_loader: type[object], adapter: type[_TLoader]
     constructors = dict(loader_class.yaml_constructors)
     for tag in (
         INCLUDE_TAG,
-        INCLUDE_MANY_TAG,
         INCLUDE_TABLE_TAG,
         INCLUDE_RAW_TAG,
         INCLUDE_TEXT_TAG,
-        JSONPATH_TAG,
         DELETE_TAG,
         REPLACE_TAG,
         SPREAD_TAG,

@@ -67,8 +67,10 @@ def test_pointer_selection_across_structured_formats(name: str, content: str, po
 
 def test_csv_row_and_cell_selection() -> None:
     loader = memory_loader({"data.csv": "name,age\nAda,37\n"})
-    assert loader.load_include(StringIO('!include-table {path: "data.csv", json_pointer: "/1"}\n')) == ["Ada", "37"]
-    assert loader.load_include(StringIO('!include-table {path: "data.csv", json_pointer: "/1/0"}\n')) == "Ada"
+    with pytest.raises(yaml.YAMLError, match="unknown"):
+        loader.load_include(StringIO('!include-table {path: "data.csv", json_pointer: "/1"}\n'))
+    with pytest.raises(yaml.YAMLError, match="unknown"):
+        loader.load_include(StringIO('!include-table {path: "data.csv", json_pointer: "/1/0"}\n'))
     with pytest.raises(yaml.YAMLError, match="table sources require"):
         loader.load_include(StringIO('!include {path: "data.csv", json_pointer: "/1"}\n'))
 

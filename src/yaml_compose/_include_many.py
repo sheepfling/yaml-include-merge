@@ -10,7 +10,7 @@ from yaml import Node
 from ._glob import expand_include_glob
 from ._include_specs import IncludeSpec, parse_many_include_spec
 from .resolver import FileSource, FileSystemIncludeResolver, IncludeRequest, ResolvedInclude, validate_include_name
-from .tags import INCLUDE_MANY_TAG
+from .tags import INCLUDE_TAG
 
 if TYPE_CHECKING:
     from .loader import IncludeLoader
@@ -21,13 +21,13 @@ def construct_include_many(loader: IncludeLoader, node: Node) -> list[object]:
     # Imported at construction time to keep the loader/constructor dependency acyclic.
     from .loader import _attach_include_route, _include_error  # pyright: ignore[reportPrivateUsage]
 
-    frame = loader._route_frame(node, tag=INCLUDE_MANY_TAG)  # pyright: ignore[reportPrivateUsage]
+    frame = loader._route_frame(node, tag=INCLUDE_TAG)  # pyright: ignore[reportPrivateUsage]
     route = (*loader.include_route, frame)
     try:
         spec = parse_many_include_spec(node)
         # Validate all names and resolver capabilities before any source is opened.
         for source in spec.sources:
-            frame = loader._route_frame(source.node, tag=INCLUDE_MANY_TAG)  # pyright: ignore[reportPrivateUsage]
+            frame = loader._route_frame(source.node, tag=INCLUDE_TAG)  # pyright: ignore[reportPrivateUsage]
             route = (*loader.include_route, frame)
             validate_include_name(source.path, allow_absolute=loader.allow_absolute_includes)
             if source.glob and type(loader.include_resolver) is not FileSystemIncludeResolver:
@@ -41,7 +41,7 @@ def construct_include_many(loader: IncludeLoader, node: Node) -> list[object]:
 
         results: list[object] = []
         for source in spec.sources:
-            frame = loader._route_frame(source.node, tag=INCLUDE_MANY_TAG)  # pyright: ignore[reportPrivateUsage]
+            frame = loader._route_frame(source.node, tag=INCLUDE_TAG)  # pyright: ignore[reportPrivateUsage]
             route = (*loader.include_route, frame)
             resolved_sources: tuple[ResolvedInclude | None, ...]
             if source.glob:
@@ -71,7 +71,7 @@ def construct_include_many(loader: IncludeLoader, node: Node) -> list[object]:
             for resolved in resolved_sources:
                 value = loader._include(  # pyright: ignore[reportPrivateUsage]
                     source.node,
-                    tag_override=INCLUDE_MANY_TAG,
+                    tag_override=INCLUDE_TAG,
                     provided_spec=IncludeSpec(
                         source.path,
                         json_pointer=spec.json_pointer,
@@ -81,7 +81,7 @@ def construct_include_many(loader: IncludeLoader, node: Node) -> list[object]:
                     resolved_override=resolved,
                 )
                 results.append(value)
-        frame = loader._route_frame(node, tag=INCLUDE_MANY_TAG)  # pyright: ignore[reportPrivateUsage]
+        frame = loader._route_frame(node, tag=INCLUDE_TAG)  # pyright: ignore[reportPrivateUsage]
         loader._include_routes_by_node[node] = (  # pyright: ignore[reportPrivateUsage]
             *loader.include_route,
             frame._replace(requested_path="<multiple sources>"),
@@ -92,7 +92,7 @@ def construct_include_many(loader: IncludeLoader, node: Node) -> list[object]:
         raise
     except (OSError, ValueError, RuntimeError) as exc:
         try:
-            _include_error(node, str(exc), exc, tag=INCLUDE_MANY_TAG)
+            _include_error(node, str(exc), exc, tag=INCLUDE_TAG)
         except yaml.YAMLError as error:
             _attach_include_route(error, route)
             raise

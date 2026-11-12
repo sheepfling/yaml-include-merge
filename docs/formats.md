@@ -2,7 +2,7 @@
 
 `yaml-compose` uses YAML as its composition language. An including YAML document owns the
 `!include`, `!include-table`, `!include-text`, `!include-raw`, merge, `!delete`, `!replace`,
-`!jsonpath`, and `!spread` operations. An included non-YAML document is parsed into its native Python value;
+and `!spread` operations. An included non-YAML document is parsed into its native Python value;
 the package does not interpret YAML tags inside it.
 
 The default registry selects YAML for `.yaml` and `.yml`, strict JSON for `.json`, JSONC for
@@ -34,8 +34,9 @@ standard JSON parser and deeply nested input may reach Python's recursion limit.
 
 ## Include options and selection
 
-Every single-source include tag accepts either a scalar literal path or an options mapping with a required
-`path` string. The scalar form is unchanged: `!include "config#blue%20.yaml"` opens that exact
+Every include tag accepts either a scalar literal path or an options mapping with a
+`path` string. `!include` additionally accepts a nonempty `sources` list instead of `path`.
+The scalar form is unchanged: `!include "config#blue%20.yaml"` opens that exact
 local name. It does not split `#`, percent-decode names, or interpret URI references. The
 mapping form keeps the path and any selector separate:
 
@@ -45,17 +46,16 @@ mapping form keeps the path and any selector separate:
 <<<: !include {path: defaults.yaml, json_pointer: /service}
 array: !include {path: hardware.yaml, json_pointer: /arrays/kbr}
 first_record: !include {path: records.jsonl, json_pointer: /0}
-first_name: !include-table {path: people.csv, json_pointer: /1/0}
 steps: [prepare, !spread [!include {path: workflow.yaml, json_pointer: /steps}], finish]
 enabled: !include {path: catalog.json, json_path: '$.items[?@.enabled == true]'}
 ```
 
 The supported fields are deliberately specific to each tag:
 
-| Tag              | Fields beyond required `path`               |
+| Tag              | Fields beyond the source                    |
 | ---------------- | ------------------------------------------- |
 | `!include`       | `documents`, `json_pointer` or `json_path`  |
-| `!include-table` | `json_pointer` or `json_path`               |
+| `!include-table` | None                                        |
 | `!include-text`  | `encoding`, `lines: {start: ..., end: ...}` |
 | `!include-raw`   | `offset`, `length`                          |
 
@@ -78,8 +78,8 @@ backslashes literally, for example `path: 'C:\configs\config#blue.yaml'`.
 ### Select part of an include
 
 `json_pointer` uses the plain string form of [JSON Pointer (RFC 6901)](https://www.rfc-editor.org/rfc/rfc6901).
-It selects from the completed included value before that value is inserted, merged, or spread
-into its parent document:
+The small built-in pointer evaluator needs no optional dependency. It selects from the
+completed included value before that value is inserted, merged, or spread into its parent document:
 
 - `""` selects the entire value, including a scalar or `null`. Omitting a selector also includes
   the whole value. `/` selects the mapping key that is the empty string.
@@ -95,10 +95,8 @@ into its parent document:
   while `/space key` selects `space key`. `/☃` selects `☃` without percent encoding.
 
 JSONL and NDJSON are lists of parsed records: `/2/name` selects the `name` member in the third
-record. CSV tables are lists of row lists: `/1/0` selects the first cell of the second row,
-with the first row still ordinary data. Cells remain strings. A selected row remains a list;
-a selected cell is a scalar. Custom mapping values and list/tuple sequences follow the same
-rules. Other custom Python objects have no implicit attribute lookup. YAML aliases are followed
+record. Custom mapping values and list/tuple sequences follow the same rules. Other custom
+Python objects have no implicit attribute lookup. YAML aliases are followed
 through the constructed value; evaluation takes one step per pointer token, so a cyclic alias
 does not cause an unbounded walk. Existing restrictions on cyclic mapping overlays still apply.
 
@@ -113,9 +111,9 @@ source bytes and nested reads count toward the existing limits, even when the re
 Repeated includes count as separate reads as before. Resolvers receive only the literal path;
 their returned source identity still controls format dispatch, confinement, and cycle checks.
 
-Use the separate `json_path` option for explicit JSONPath queries. It has the same optional
-strict engine, always-list result, JSON-compatible input requirements, and per-selection limits
-as `!jsonpath [source, query]`. These selectors are mutually exclusive in one include mapping.
+Use the separate `json_path` option for explicit JSONPath queries. It uses an optional
+strict engine with an always-list result, JSON-compatible input requirements, and per-selection limits
+described below. These selectors are mutually exclusive and supported only on `!include`.
 See [JSONPath selection](jsonpath.md) for filters, slices, functions, and limits.
 
 ### YAML document streams
@@ -218,25 +216,25 @@ All resolver/root/count/depth policies and stream cleanup still apply.
 
 ## Collect several structured files
 
-`!include-many` is an object-only operation for explicitly ordered paths and filesystem globs:
+`!include` accepts an explicit nonempty `sources` list for ordered paths and filesystem globs:
 
 ```yaml
 %LOADER YamlCompose
 ---
-configs: !include-many
-  paths:
+configs: !include
+  sources:
     - base.yaml
     - {path: 'special#;%20.yaml'}
     - {glob: 'profiles/*.yaml'}
   json_pointer: /service
 ```
 
-Unlike the single-source include tags, it requires a mapping with `paths`, a sequence of
+Supply exactly one of `path` or `sources`; neither may be empty. `sources` is a sequence of
 entries. Each entry is either a literal path string, `{path: literal_path}`, or an explicit
 `{glob: pattern}`. A string containing `*`, `?`, `[`, `#`, or `%` stays a literal path; only a
 `glob` entry expands patterns. Names are never interpreted as URI references or percent-decoded.
-There is no scalar `!include-many` shorthand and no implicit comma/semicolon-delimited path list.
-Empty `paths: []` returns `[]`.
+Scalar `!include` remains one literal path. There is no implicit comma/semicolon-delimited path
+list. Empty `sources: []` is rejected.
 
 Optional top-level fields are `documents: single` (the default) or `documents: all`, and either
 `json_pointer` or `json_path`. Entries do not accept their own selectors or include-option
@@ -248,24 +246,24 @@ expressions, and tagged expressions in options are errors before source resoluti
 The output has one item per resolved file, in source order. `documents: single` loads each
 file as ordinary `!include`; `documents: all` loads each file as `!include {path: ..., documents: all}`, which requires
 YAML. CSV tables and raw/text-specific reads are not added to ordinary structured include
-semantics by using this tag. A source array stays one nested array, a YAML stream stays one
+semantics by using `sources`. A source array stays one nested array, a YAML stream stays one
 nested document list, and a JSONPath selection stays one nested nodelist. Nothing is flattened.
 
 Selection is applied independently to each **completed file result**, not to the outer result
 list and not separately to each document in `documents: all` mode:
 
 ```yaml
-second_document_settings: !include-many
-  paths: [one.yaml, two.yaml]
+second_document_settings: !include
+  sources: [one.yaml, two.yaml]
   documents: all
   json_pointer: /1/settings
 
-all_names: !include-many
-  paths: [{glob: 'records/*.json'}]
+all_names: !include
+  sources: [{glob: 'records/*.json'}]
   json_path: '$.items[*].name'
 
-recent_documents_per_file: !include-many
-  paths: [one.yaml, two.yaml]
+recent_documents_per_file: !include
+  sources: [one.yaml, two.yaml]
   documents: all
   json_path: '$[-2:]'
 ```
@@ -276,9 +274,9 @@ list for each file, including `[]` for a file with no matches. Both selectors re
 single-source validation rules and JSONPath's optional dependency and resource controls.
 
 The last example returns one list of up to two documents per file, not the last two files.
-To query the completed file collection instead, apply a separate `!jsonpath` around
-`!include-many`. Per-document selector scope is not implicit: the document list remains
-the selection root in `documents: all` mode.
+Selecting across the outer file collection is not supported by this include contract.
+Per-document selector scope is not implicit: the document list remains the selection root
+in `documents: all` mode.
 
 A failure in any source fails the operation; no partial list escapes. Each source's full
 content is parsed before selection, including later YAML documents and nested includes.

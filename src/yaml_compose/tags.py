@@ -13,9 +13,6 @@ COMPOSE_LOADER_TAG = "YamlCompose"
 INCLUDE_TAG = "!include"
 """Tag that loads one structured document, or an explicit YAML document list."""
 
-INCLUDE_MANY_TAG = "!include-many"
-"""Tag that collects one result per explicit source or filesystem glob match."""
-
 INCLUDE_TABLE_TAG = "!include-table"
 """Tag that loads a CSV source as ordered rows of strings."""
 
@@ -24,9 +21,6 @@ INCLUDE_RAW_TAG = "!include-raw"
 
 INCLUDE_TEXT_TAG = "!include-text"
 """Tag that includes a UTF-8 file as an unparsed string."""
-
-JSONPATH_TAG = "!jsonpath"
-"""Tag that selects a list of JSONPath matches from one structured value."""
 
 DELETE_TAG = "!delete"
 """Tag that removes an inherited mapping key."""
@@ -50,12 +44,10 @@ __all__ = (
     "COMPOSE_LOADER_TAG",
     "DEEP_MERGE_KEY",
     "DELETE_TAG",
-    "INCLUDE_MANY_TAG",
     "INCLUDE_RAW_TAG",
     "INCLUDE_TABLE_TAG",
     "INCLUDE_TAG",
     "INCLUDE_TEXT_TAG",
-    "JSONPATH_TAG",
     "LOADER_DIRECTIVE",
     "MERGE_KEY",
     "MERGE_TAG",

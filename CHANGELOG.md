@@ -2,17 +2,17 @@
 
 ## Unreleased
 
-- Add object-only `!include-many` for ordered literal paths and explicit filesystem globs,
+- Add `sources` object mode on `!include` for ordered literal paths and explicit filesystem globs,
   preserving one result per file and applying document mode and selection independently to
   each completed source. Keep duplicates across entries, reject no-match globs, confine
   traversal to allowed roots, and share a configurable `max_glob_steps` expansion budget.
 - Add options mappings across all include tags while preserving every scalar path literally,
-  including filenames containing `#` and `%`. Structured includes support mutually exclusive
+  including filenames containing `#` and `%`. `!include` supports mutually exclusive
   plain `json_pointer` and `json_path` fields, separate from the source path.
 - Add text encoding and inclusive physical-line selection to `!include-text`, and offset/length
   byte selection to `!include-raw`. Validate options before opening and charge complete reads
   against existing budgets before selecting any range.
-- Add optional explicit JSONPath selection through `json_path` or `!jsonpath [source, query]`,
+- Add optional explicit JSONPath selection through the `!include` option `json_path`,
   with a strict RFC 9535 engine, always-list results, JSON-domain validation, configurable
   input/result bounds, and isolated subprocess deadlines.
 - Add explicit `documents: all` on structured `!include` objects for YAML document streams, returning a document list
@@ -20,7 +20,7 @@
   anchors, complete-stream validation, and shared include budgets. Retain the outer document
   list for zero, one, or many documents so JSONPath can index and slice the whole stream.
 - Add plain JSON Pointer selection across structured mapping members, sequence elements,
-  JSONL/NDJSON records, and CSV rows/cells. Preserve full-source validation, include routes,
+  JSONL/NDJSON records. Preserve full-source validation, include routes,
   resolver confinement, and resource budgets before selection.
 
 ## 0.1.1

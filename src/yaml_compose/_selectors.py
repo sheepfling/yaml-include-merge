@@ -1,4 +1,8 @@
-"""Plain RFC 6901 JSON Pointers over completed include values."""
+"""Built-in RFC 6901 Pointer selection, not the optional JSONPath engine.
+
+This deliberately small exact-address traversal preserves Python values and
+requires string mapping keys. It has no expression evaluation or dependency.
+"""
 
 from __future__ import annotations
 

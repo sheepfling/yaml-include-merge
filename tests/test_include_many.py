@@ -10,7 +10,7 @@ import pytest
 import yaml
 
 from yaml_compose import (
-    INCLUDE_MANY_TAG,
+    INCLUDE_TAG,
     FileRoot,
     FileSource,
     IncludeLimits,
@@ -32,7 +32,7 @@ from yaml_compose._glob import expand_include_glob
 def load_many(options: str, files: Mapping[str, str | bytes], *, limits: IncludeLimits | None = None) -> object:
     root = MemoryRoot("many")
     return load_yaml_compose(
-        StringIO("!include-many " + options),
+        StringIO("!include " + options),
         allowed_roots=[root],
         include_resolver=MemoryIncludeResolver(root, files),
         include_limits=limits or IncludeLimits(),
@@ -40,18 +40,19 @@ def load_many(options: str, files: Mapping[str, str | bytes], *, limits: Include
 
 
 def test_empty_and_ordered_sources_preserve_duplicates_and_nested_values() -> None:
-    assert INCLUDE_MANY_TAG == "!include-many"
-    assert load_many("{paths: []}", {}, limits=IncludeLimits(max_include_files=0)) == []
+    assert INCLUDE_TAG == "!include"
+    with pytest.raises(yaml.YAMLError):
+        load_many("{sources: []}", {}, limits=IncludeLimits(max_include_files=0))
     files = {"a.yaml": "[one, two]", "b.json": '{"x": 3}'}
-    assert load_many("{paths: [b.json, {path: a.yaml}, b.json]}", files) == [{"x": 3}, ["one", "two"], {"x": 3}]
+    assert load_many("{sources: [b.json, {path: a.yaml}, b.json]}", files) == [{"x": 3}, ["one", "two"], {"x": 3}]
 
 
 def test_pointer_applies_to_each_completed_source_not_aggregate() -> None:
     files = {"a.yaml": "x: [one, two]", "b.yaml": "x: [three]"}
-    assert load_many("{paths: [a.yaml, b.yaml], json_pointer: /x}", files) == [["one", "two"], ["three"]]
-    assert load_many("{paths: [a.yaml], json_pointer: ''}", files) == [{"x": ["one", "two"]}]
+    assert load_many("{sources: [a.yaml, b.yaml], json_pointer: /x}", files) == [["one", "two"], ["three"]]
+    assert load_many("{sources: [a.yaml], json_pointer: ''}", files) == [{"x": ["one", "two"]}]
     with pytest.raises(yaml.YAMLError, match="mapping key '0'"):
-        load_many("{paths: [a.yaml], json_pointer: /0}", files)
+        load_many("{sources: [a.yaml], json_pointer: /0}", files)
 
 
 @pytest.mark.parametrize("query_results", [[], [1], [[1, 2], 3]])
@@ -68,7 +69,7 @@ def test_jsonpath_preserves_each_source_nodelist_and_policy(
     monkeypatch.setattr("yaml_compose.loader.select_jsonpath", select)
     root = MemoryRoot("jsonpath-many")
     result = load_yaml_compose(
-        StringIO("!include-many {paths: [a.yaml, b.yaml], json_path: '$.x'}"),
+        StringIO("!include {sources: [a.yaml, b.yaml], json_path: '$.x'}"),
         include_resolver=MemoryIncludeResolver(root, {"a.yaml": "x: 1", "b.yaml": "x: 2"}),
         allowed_roots=[root],
         jsonpath_limits=limits,
@@ -79,53 +80,54 @@ def test_jsonpath_preserves_each_source_nodelist_and_policy(
 
 def test_documents_all_retains_per_file_document_lists_and_selects_from_them() -> None:
     files = {"a.yaml": "---\nx: 1\n---\nx: [2, 3]", "b.yaml": ""}
-    assert load_many("{paths: [a.yaml, b.yaml], documents: all}", files) == [[{"x": 1}, {"x": [2, 3]}], []]
-    assert load_many("{paths: [a.yaml], documents: all, json_pointer: /1/x}", files) == [[2, 3]]
+    assert load_many("{sources: [a.yaml, b.yaml], documents: all}", files) == [[{"x": 1}, {"x": [2, 3]}], []]
+    assert load_many("{sources: [a.yaml], documents: all, json_pointer: /1/x}", files) == [[2, 3]]
     with pytest.raises(yaml.YAMLError, match="expected a single document"):
-        load_many("{paths: [a.yaml]}", files)
+        load_many("{sources: [a.yaml]}", files)
     with pytest.raises(yaml.YAMLError, match="requires a YAML source"):
-        load_many("{paths: [a.json], documents: all}", {"a.json": "{}"})
+        load_many("{sources: [a.json], documents: all}", {"a.json": "{}"})
 
 
 def test_late_document_errors_and_nested_cycles_are_not_hidden() -> None:
     with pytest.raises(yaml.YAMLError, match="duplicate"):
-        load_many("{paths: [a.yaml], documents: all, json_pointer: /0}", {"a.yaml": "x: 1\n---\nx: 1\nx: 2"})
-    files = {"a.yaml": "x: 1\nother: !include-many {paths: [a.yaml]}"}
+        load_many("{sources: [a.yaml], documents: all, json_pointer: /0}", {"a.yaml": "x: 1\n---\nx: 1\nx: 2"})
+    files = {"a.yaml": "x: 1\nother: !include {sources: [a.yaml]}"}
     with pytest.raises(yaml.YAMLError, match="include cycle") as error:
-        load_many("{paths: [a.yaml], json_pointer: /x}", files)
-    assert [frame.tag for frame in get_include_route(error.value)] == [INCLUDE_MANY_TAG, INCLUDE_MANY_TAG]
+        load_many("{sources: [a.yaml], json_pointer: /x}", files)
+    assert [frame.tag for frame in get_include_route(error.value)] == [INCLUDE_TAG, INCLUDE_TAG]
 
 
 @pytest.mark.parametrize(
     "options",
     [
-        "file.yaml",
         "[]",
         "{}",
-        "{paths: null}",
-        "{paths: file.yaml}",
-        "{paths: [null]}",
-        "{paths: [true]}",
-        "{paths: [42]}",
-        "{paths: ['']}",
-        "{paths: [[]]}",
-        "{paths: [{}]}",
-        "{paths: [{glob: ''}]}",
-        "{paths: [{path: a, glob: b}]}",
-        "{paths: [{glob: a, glob: b}]}",
-        "{paths: [!include name.yaml]}",
-        "{paths: [{path: !include name.yaml}]}",
-        "{paths: !custom [a.yaml]}",
-        "{paths: [!custom {path: a.yaml}]}",
-        "{paths: [a.yaml], json_pointer: /a, json_path: '$'}",
-        "{paths: [a.yaml], json_pointer: '#/a'}",
-        "{paths: [a.yaml], json_path: null}",
-        "{paths: [a.yaml], documents: true}",
-        "{paths: [a.yaml], documents: one}",
-        "{paths: [a.yaml], paths: []}",
-        "{paths: [], allow_absolute_includes: true}",
-        "{paths: [a.yaml, 'https://example.invalid/x']}",
-        "{paths: [a.yaml, {glob: '*.yaml'}]}",
+        "{sources: []}",
+        "{path: x, sources: [a.yaml]}",
+        "{sources: null}",
+        "{sources: file.yaml}",
+        "{sources: [null]}",
+        "{sources: [true]}",
+        "{sources: [42]}",
+        "{sources: ['']}",
+        "{sources: [[]]}",
+        "{sources: [{}]}",
+        "{sources: [{glob: ''}]}",
+        "{sources: [{path: a, glob: b}]}",
+        "{sources: [{glob: a, glob: b}]}",
+        "{sources: [!include name.yaml]}",
+        "{sources: [{path: !include name.yaml}]}",
+        "{sources: !custom [a.yaml]}",
+        "{sources: [!custom {path: a.yaml}]}",
+        "{sources: [a.yaml], json_pointer: /a, json_path: '$'}",
+        "{sources: [a.yaml], json_pointer: '#/a'}",
+        "{sources: [a.yaml], json_path: null}",
+        "{sources: [a.yaml], documents: true}",
+        "{sources: [a.yaml], documents: one}",
+        "{sources: [a.yaml], sources: []}",
+        "{sources: [], allow_absolute_includes: true}",
+        "{sources: [a.yaml, 'https://example.invalid/x']}",
+        "{sources: [a.yaml, {glob: '*.yaml'}]}",
     ],
 )
 def test_invalid_shape_names_and_glob_resolver_fail_before_any_resolution(options: str) -> None:
@@ -136,8 +138,8 @@ def test_invalid_shape_names_and_glob_resolver_fail_before_any_resolution(option
             raise AssertionError(f"invalid spec reached resolver: {request.name}")
 
     with pytest.raises(yaml.YAMLError) as error:
-        load_yaml_compose(StringIO("!include-many " + options), allowed_roots=[root], include_resolver=Resolver())
-    assert get_include_route(error.value)[-1].tag == INCLUDE_MANY_TAG
+        load_yaml_compose(StringIO("!include " + options), allowed_roots=[root], include_resolver=Resolver())
+    assert get_include_route(error.value)[-1].tag == INCLUDE_TAG
 
 
 @pytest.mark.parametrize(
@@ -151,18 +153,18 @@ def test_invalid_shape_names_and_glob_resolver_fail_before_any_resolution(option
 )
 def test_every_source_uses_shared_include_limits(limits: IncludeLimits) -> None:
     with pytest.raises(yaml.YAMLError, match=r"limit|maximum"):
-        load_many("{paths: [a.yaml, a.yaml], json_pointer: /x}", {"a.yaml": "x: 1"}, limits=limits)
+        load_many("{sources: [a.yaml, a.yaml], json_pointer: /x}", {"a.yaml": "x: 1"}, limits=limits)
 
 
 def test_nested_counts_and_depth_are_file_reads_not_collection_wrappers() -> None:
-    files = {"a.yaml": "x: !include-many {paths: [b.yaml, c.yaml]}", "b.yaml": "2", "c.yaml": "3"}
-    assert load_many("{paths: [a.yaml]}", files, limits=IncludeLimits(max_include_files=3, max_include_depth=2)) == [
+    files = {"a.yaml": "x: !include {sources: [b.yaml, c.yaml]}", "b.yaml": "2", "c.yaml": "3"}
+    assert load_many("{sources: [a.yaml]}", files, limits=IncludeLimits(max_include_files=3, max_include_depth=2)) == [
         {"x": [2, 3]}
     ]
     with pytest.raises(yaml.YAMLError, match="maximum include count"):
-        load_many("{paths: [a.yaml]}", files, limits=IncludeLimits(max_include_files=2))
+        load_many("{sources: [a.yaml]}", files, limits=IncludeLimits(max_include_files=2))
     with pytest.raises(yaml.YAMLError, match="maximum include depth"):
-        load_many("{paths: [a.yaml]}", files, limits=IncludeLimits(max_include_depth=1))
+        load_many("{sources: [a.yaml]}", files, limits=IncludeLimits(max_include_depth=1))
 
 
 def test_custom_loader_registration_and_source_marks() -> None:
@@ -172,16 +174,16 @@ def test_custom_loader_registration_and_source_marks() -> None:
     root = MemoryRoot("configured")
     resolver = MemoryIncludeResolver(root, {"a.yaml": "1"})
     assert load_yaml_compose(
-        StringIO("!include-many {paths: [a.yaml]}"), allowed_roots=[root], include_resolver=resolver, yaml_loader=Loader
+        StringIO("!include {sources: [a.yaml]}"), allowed_roots=[root], include_resolver=resolver, yaml_loader=Loader
     ) == [1]
     with pytest.raises(yaml.YAMLError) as error:
         load_yaml_compose(
-            StringIO("value: !include-many\n  paths:\n    - a.yaml\n    - missing.yaml\n"),
+            StringIO("value: !include\n  sources:\n    - a.yaml\n    - missing.yaml\n"),
             allowed_roots=[root],
             include_resolver=resolver,
         )
     frame = get_include_route(error.value)[-1]
-    assert (frame.tag, frame.requested_path, frame.line) == (INCLUDE_MANY_TAG, "missing.yaml", 4)
+    assert (frame.tag, frame.requested_path, frame.line) == (INCLUDE_TAG, "missing.yaml", 4)
 
 
 def test_custom_resolver_cannot_return_outside_source() -> None:
@@ -198,7 +200,7 @@ def test_custom_resolver_cannot_return_outside_source() -> None:
             return ResolvedInclude(MemorySource(outside, PurePosixPath("x")), open_binary)
 
     with pytest.raises(yaml.YAMLError, match="outside the allowed roots"):
-        load_yaml_compose(StringIO("!include-many {paths: [x]}"), allowed_roots=[allowed], include_resolver=Resolver())
+        load_yaml_compose(StringIO("!include {sources: [x]}"), allowed_roots=[allowed], include_resolver=Resolver())
     assert not opened
 
 
@@ -211,13 +213,13 @@ def test_glob_steps_and_matches_are_bounded_before_reads(test_path: Path) -> Non
     ):
         with pytest.raises(yaml.YAMLError, match=message):
             load_yaml_compose(
-                StringIO("!include-many {paths: [{glob: '*.yaml'}]}"),
+                StringIO("!include {sources: [{glob: '*.yaml'}]}"),
                 search_paths=[test_path],
                 allowed_roots=[test_path],
                 include_limits=limits,
             )
     assert load_yaml_compose(
-        StringIO("!include-many {paths: [a.yaml]}"),
+        StringIO("!include {sources: [a.yaml]}"),
         search_paths=[test_path],
         allowed_roots=[test_path],
         include_limits=IncludeLimits(max_glob_steps=0),
@@ -239,7 +241,7 @@ def test_glob_profile_is_snapshotted_and_mutable_like_existing_limits() -> None:
 
 def test_glob_steps_are_shared_across_repeated_and_nested_expansions(test_path: Path) -> None:
     (test_path / "a.json").write_text("1", encoding="utf-8")
-    (test_path / "outer.yaml").write_text("!include-many {paths: [{glob: '*.json'}]}", encoding="utf-8")
+    (test_path / "outer.yaml").write_text("!include {sources: [{glob: '*.json'}]}", encoding="utf-8")
     steps = 0
 
     def count_step() -> None:
@@ -253,19 +255,19 @@ def test_glob_steps_are_shared_across_repeated_and_nested_expansions(test_path: 
         search_paths=[test_path], allowed_roots=[test_path], include_limits=IncludeLimits(max_glob_steps=steps)
     )
     for _ in range(2):
-        assert loader.load_include(StringIO("!include-many {paths: [{glob: '*.json'}]}")) == [1]
+        assert loader.load_include(StringIO("!include {sources: [{glob: '*.json'}]}")) == [1]
     with pytest.raises(yaml.YAMLError, match="maximum glob traversal"):
-        loader.load_include(StringIO("!include-many {paths: [{glob: '*.json'}, {glob: '*.json'}]}"))
+        loader.load_include(StringIO("!include {sources: [{glob: '*.json'}, {glob: '*.json'}]}"))
     with pytest.raises(yaml.YAMLError, match="maximum glob traversal"):
-        loader.load_include(StringIO("!include-many {paths: [{glob: 'outer.yaml'}]}"))
+        loader.load_include(StringIO("!include {sources: [{glob: 'outer.yaml'}]}"))
     assert load_yaml_compose(
-        StringIO("!include-many {paths: [{glob: 'outer.yaml'}]}"),
+        StringIO("!include {sources: [{glob: 'outer.yaml'}]}"),
         search_paths=[test_path],
         allowed_roots=[test_path],
         include_limits=IncludeLimits(max_glob_steps=2 * steps),
     ) == [[1]]
     assert load_yaml_compose(
-        StringIO("!include-many {paths: [{glob: '*.json'}, {glob: '*.json'}]}"),
+        StringIO("!include {sources: [{glob: '*.json'}, {glob: '*.json'}]}"),
         search_paths=[test_path],
         allowed_roots=[test_path],
         include_limits=IncludeLimits(max_glob_steps=None),
@@ -278,7 +280,7 @@ def test_glob_traversal_budget_counts_unmatched_entries(test_path: Path) -> None
         (test_path / f"unmatched-{index}.txt").write_text("x", encoding="utf-8")
     with pytest.raises(yaml.YAMLError, match="glob traversal"):
         load_yaml_compose(
-            StringIO("!include-many {paths: [{glob: '*.json'}]}"),
+            StringIO("!include {sources: [{glob: '*.json'}]}"),
             search_paths=[test_path],
             allowed_roots=[test_path],
             include_limits=IncludeLimits(max_glob_steps=5),
@@ -287,7 +289,7 @@ def test_glob_traversal_budget_counts_unmatched_entries(test_path: Path) -> None
 
 def test_invalid_entry_error_names_the_path_without_opening_valid_predecessors() -> None:
     with pytest.raises(yaml.YAMLError) as error:
-        load_many("{paths: [missing.yaml, 'https://example.invalid/bad']}", {})
+        load_many("{sources: [missing.yaml, 'https://example.invalid/bad']}", {})
     assert get_include_route(error.value)[-1].requested_path == "https://example.invalid/bad"
 
 
@@ -295,17 +297,17 @@ def test_many_results_spread_explicitly_and_do_not_implicitly_merge() -> None:
     root = MemoryRoot("spread-many")
     resolver = MemoryIncludeResolver(root, {"a.yaml": "[one, two]", "b.yaml": "value: 2"})
     assert load_yaml_compose(
-        StringIO("[before, !spread [!include-many {paths: [a.yaml, b.yaml]}], after]"),
+        StringIO("[before, !spread [!include {sources: [a.yaml, b.yaml]}], after]"),
         allowed_roots=[root],
         include_resolver=resolver,
     ) == ["before", ["one", "two"], {"value": 2}, "after"]
     with pytest.raises(yaml.YAMLError, match="must be a mapping") as error:
         load_yaml_compose(
-            StringIO("<<<: !include-many {paths: [b.yaml]}"),
+            StringIO("<<<: !include {sources: [b.yaml]}"),
             allowed_roots=[root],
             include_resolver=resolver,
         )
-    assert get_include_route(error.value)[-1].tag == INCLUDE_MANY_TAG
+    assert get_include_route(error.value)[-1].tag == INCLUDE_TAG
 
 
 def test_glob_opener_keeps_checked_canonical_target_if_alias_changes(
@@ -333,7 +335,7 @@ def test_glob_opener_keeps_checked_canonical_target_if_alias_changes(
 
     monkeypatch.setattr(loader_module, "_canonical_source", canonical)
     assert load_yaml_compose(
-        StringIO("!include-many {paths: [{glob: alias.yaml}]}"),
+        StringIO("!include {sources: [{glob: alias.yaml}]}"),
         search_paths=[inside],
         allowed_roots=[inside],
     ) == ["safe"]
@@ -348,5 +350,5 @@ def test_documents_all_jsonpath_runs_once_per_document_list(monkeypatch: pytest.
         return [2]
 
     monkeypatch.setattr("yaml_compose.loader.select_jsonpath", select)
-    assert load_many("{paths: [a.yaml], documents: all, json_path: '$[1].x'}", {"a.yaml": "x: 1\n---\nx: 2"}) == [[2]]
+    assert load_many("{sources: [a.yaml], documents: all, json_path: '$[1].x'}", {"a.yaml": "x: 1\n---\nx: 2"}) == [[2]]
     assert captured == [[{"x": 1}, {"x": 2}]]

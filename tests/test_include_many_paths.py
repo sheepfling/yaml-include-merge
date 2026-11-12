@@ -27,8 +27,8 @@ from yaml_compose import (
 from yaml_compose._glob import expand_include_glob
 
 
-def _many(paths: list[object], **options: object) -> str:
-    return "!include-many " + json.dumps({"paths": paths, **options}, ensure_ascii=False)
+def _many(sources: list[object], **options: object) -> str:
+    return "!include " + json.dumps({"sources": sources, **options}, ensure_ascii=False)
 
 
 def _main(directory: Path, text: str) -> Path:
@@ -256,15 +256,14 @@ def test_custom_resolver_never_falls_back_to_filesystem_globbing(tmp_path: Path)
 @pytest.mark.parametrize(
     "text",
     [
-        "!include-many '*.json'",
-        "!include-many [a.json]",
-        "!include-many {paths: a.json}",
-        "!include-many {paths: [a.json, {path: b.json, extra: 1}]}",
-        "!include-many {paths: [a.json, {glob: '*.json', path: a.json}]}",
-        "!include-many {paths: [a.json, !include b.json]}",
-        "!include-many {paths: [a.json], json_pointer: '#/value'}",
-        "!include-many {paths: [a.json], documents: false}",
-        "!include-many {paths: [a.json], allowed_roots: ['/']}",
+        "!include [a.json]",
+        "!include {sources: a.json}",
+        "!include {sources: [a.json, {path: b.json, extra: 1}]}",
+        "!include {sources: [a.json, {glob: '*.json', path: a.json}]}",
+        "!include {sources: [a.json, !include b.json]}",
+        "!include {sources: [a.json], json_pointer: '#/value'}",
+        "!include {sources: [a.json], documents: false}",
+        "!include {sources: [a.json], allowed_roots: ['/']}",
     ],
 )
 def test_invalid_many_spec_fails_before_any_source_is_resolved(text: str) -> None:
@@ -290,9 +289,9 @@ def test_literal_many_custom_sources_close_and_keep_request_spelling() -> None:
             streams.append(stream)
             return ResolvedInclude(MemorySource(root, PurePosixPath("canonical.json")), lambda: stream)
 
-    paths: list[object] = ["alias#;%20.json", {"path": "alias#;%20.json"}]
+    sources: list[object] = ["alias#;%20.json", {"path": "alias#;%20.json"}]
     assert load_yaml_compose(
-        StringIO(_many(paths, json_pointer="/selected")), allowed_roots=[root], include_resolver=Resolver()
+        StringIO(_many(sources, json_pointer="/selected")), allowed_roots=[root], include_resolver=Resolver()
     ) == [[1, 2], [1, 2]]
     assert seen == ["alias#;%20.json", "alias#;%20.json"]
     assert all(stream.closed for stream in streams)

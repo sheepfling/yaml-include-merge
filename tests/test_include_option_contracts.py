@@ -45,7 +45,7 @@ def test_single_and_many_share_selector_and_document_mode_contract(
     options: str, expected: tuple[str | None, str | None, bool]
 ) -> None:
     single = parse_include_spec(_node("!include {path: 'a#;%20.yaml'" + options + "}"), tag="!include")
-    many = parse_many_include_spec(_node("!include-many {paths: ['a#;%20.yaml']" + options + "}"))
+    many = parse_many_include_spec(_node("!include {sources: ['a#;%20.yaml']" + options + "}"))
     assert single.path == many.sources[0].path == "a#;%20.yaml"
     assert (single.json_pointer, single.json_path, single.all_documents) == expected
     assert (many.json_pointer, many.json_path, many.all_documents) == expected
@@ -64,7 +64,7 @@ def test_single_and_many_share_selector_and_document_mode_contract(
 )
 def test_single_and_many_keep_identical_option_errors(options: str, message: str) -> None:
     single_node = _node("!include {path: a.yaml, " + options + "}")
-    many_node = _node("!include-many {paths: [a.yaml], " + options + "}")
+    many_node = _node("!include {sources: [a.yaml], " + options + "}")
     with pytest.raises(ValueError) as single:
         parse_include_spec(single_node, tag="!include")
     with pytest.raises(ValueError) as many:
