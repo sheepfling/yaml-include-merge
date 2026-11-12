@@ -54,6 +54,14 @@ A string is a scalar, not JSON text to parse again. `!include-all` supplies its 
 of documents, so `$[1]` selects the second document. Queries do not change single-document
 `!include` behavior or invent a multi-document stream interpretation.
 
+That document-list root is retained for zero, one, or many YAML documents. `$[1:3]` selects
+the second and third documents, `$[-2:]` the last two, and `$[::-1]` all documents in reverse
+order. `$` matches the entire document list as one nested value; `$[:]` matches each document.
+If a document is itself an array, it stays nested unless the query explicitly selects inside it.
+For `!include-many` with `documents: all`, each query sees one file's document list and the
+outer result retains one nodelist per file, including empty lists. Slicing that outer file
+collection is a separate operation using `!jsonpath [!include-many {...}, query]`.
+
 `!spread` explicitly inserts matched values into an outer list. A result list is not an
 implicit mapping merge: `<<<: !jsonpath [...]` is an error even with exactly one mapping match.
 Use JSON Pointer when one known mapping is needed for a merge. Invalid query syntax, wrong

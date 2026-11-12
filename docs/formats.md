@@ -138,6 +138,12 @@ documents produce one list item per document, in order. A document that is itsel
 stays nested: two sequence documents become `[sequence1, sequence2]`, never one flattened list.
 Empty documents are retained and count when indexing.
 
+The outer document list is deliberate, not a wrapper to discard for zero or one document.
+It makes whole-stream JSONPath slices possible: `$[1:3]` selects the second and third documents,
+`$[-2:]` selects the last two, and `$[::-1]` reverses document order. A sequence-valued document
+remains one item; `$[1:3]` does not slice the contents of those documents. `$` selects the whole
+document list as one match, whereas `$[:]` selects its individual documents.
+
 A selector applies once to this document list after the complete stream is parsed. JSON Pointer
 `/0` selects the first document, `/1/settings` selects `settings` in the second document, and
 `""` retains the whole list. Even if a selector chooses an early document, a syntax error,
@@ -256,12 +262,22 @@ second_document_settings: !include-many
 all_names: !include-many
   paths: [{glob: 'records/*.json'}]
   json_path: '$.items[*].name'
+
+recent_documents_per_file: !include-many
+  paths: [one.yaml, two.yaml]
+  documents: all
+  json_path: '$[-2:]'
 ```
 
 For the first example, `/1/settings` selects from the document list for each file. If either
 file lacks that path, the whole operation fails. JSONPath's zero/one/many matches remain a
 list for each file, including `[]` for a file with no matches. Both selectors retain their
 single-source validation rules and JSONPath's optional dependency and resource controls.
+
+The last example returns one list of up to two documents per file, not the last two files.
+To query the completed file collection instead, apply a separate `!jsonpath` around
+`!include-many`. Per-document selector scope is not implicit: the document list remains
+the selection root in `documents: all` mode.
 
 A failure in any source fails the operation; no partial list escapes. Each source's full
 content is parsed before selection, including later YAML documents and nested includes.

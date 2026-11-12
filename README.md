@@ -133,6 +133,8 @@ for string, text, and raw includes.
 Use `!include-all "bundle.yaml"` to include every document in a YAML stream as a list.
 The result is always a document list, even for an empty source or a single document.
 `!include-all {path: bundle.yaml, json_pointer: /1/settings}` selects `settings` from the second document.
+`!include-all {path: bundle.yaml, json_path: '$[1:3]'}` selects the second and third documents.
+The document-list root is retained even for a single document, so indexing and slicing stay consistent.
 Ordinary `!include` keeps its single-document behavior. See [YAML streams](docs/formats.md#yaml-document-streams).
 
 ## Collect several files
