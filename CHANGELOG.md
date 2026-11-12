@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add explicit `!include-all` for YAML document streams, always returning a document list
+  before optional fragment selection. Keep ordinary `!include` single-document semantics,
+  document-local anchors, complete-stream validation, and shared include budgets.
+
 - Add URI-fragment JSON Pointer selection to includes, including structured mapping members,
   sequence elements, JSONL/NDJSON records, and CSV rows/cells. Preserve full-source validation,
   include routes, resolver confinement, and resource budgets before selection.

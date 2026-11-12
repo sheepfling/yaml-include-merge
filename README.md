@@ -82,6 +82,7 @@ the composition layer, so included mappings can participate in the same merge op
 | Tag              | Input                                | Result                              |
 | ---------------- | ------------------------------------ | ----------------------------------- |
 | `!include`       | YAML, JSON-family, TOML, INI, dotenv | Native Python value                 |
+| `!include-all`   | YAML document stream                 | List of documents, even zero or one |
 | `!include-table` | CSV or registered table adapter      | Rows of strings; first row included |
 | `!include-text`  | UTF-8 text                           | Exact decoded string                |
 | `!include-raw`   | Any file                             | Exact bytes                         |
@@ -103,6 +104,11 @@ For parser details and the format adapter API, see the [included formats guide](
 The [worked format examples](docs/examples.md#include-json-and-toml-sources) cover JSON,
 TOML, JSONC, JSON5, JSON Lines, NDJSON, and CSV. See the [INI, dotenv, and text examples](docs/examples.md#ini-dotenv-and-text-includes)
 for string, text, and raw includes.
+
+Use `!include-all "bundle.yaml"` to include every document in a YAML stream as a list.
+The result is always a document list, even for an empty source or a single document.
+`!include-all "bundle.yaml#/1/settings"` selects `settings` from the second document.
+Ordinary `!include` keeps its single-document behavior. See [YAML streams](docs/formats.md#yaml-document-streams).
 
 ## Loading and include boundaries
 

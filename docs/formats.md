@@ -1,7 +1,7 @@
 # Included document formats
 
 `yaml-compose` uses YAML as its composition language. An including YAML document owns the
-`!include`, `!include-table`, `!include-text`, `!include-raw`, merge, `!delete`, `!replace`,
+`!include`, `!include-all`, `!include-table`, `!include-text`, `!include-raw`, merge, `!delete`, `!replace`,
 and `!spread` operations. An included non-YAML document is parsed into its native Python value;
 the package does not interpret YAML tags inside it.
 
@@ -96,12 +96,63 @@ still controls format dispatch, confinement, and cycle checks. A literal `#` in 
 now reserved by this syntax: use a fragment-free alias through a custom resolver for such a
 source. Fragment-only same-document references are not supported.
 
-### YAML streams and scalar includes
+### YAML document streams
 
-A YAML sequence within one document is not a multi-document YAML stream. Ordinary `!include`
-continues to require a single YAML document; it rejects a source with multiple `---` documents,
-even when a fragment is present. `#/0` indexes a sequence in that document, not a document in a
-stream. There is currently no implicit flattening, stream merging, or all-documents mode.
+Use `!include-all` explicitly to read a YAML stream as a list of all its documents:
+
+```yaml
+%LOADER YamlCompose
+---
+documents: !include-all "bundle.yaml"
+settings: !include-all "bundle.yaml#/1/settings"
+steps: [prepare, !spread [!include-all "steps.yaml"], finish]
+```
+
+Without a fragment, the result is always a list. An empty or comment-only stream gives `[]`;
+a single mapping gives `[mapping]`; an explicit empty document gives `[null]`. Multiple
+`---` documents produce one list item per document, in order. A document that is itself a
+sequence stays nested: two sequence documents become `[sequence1, sequence2]`, never one
+flattened sequence. Empty documents are retained and count when indexing.
+
+The JSON Pointer applies to this document list after the complete stream is parsed.
+`#/0` selects the first document, `#/1/settings` selects `settings` in the second document,
+and `#` retains the whole list. Even if a selector chooses an early document, a syntax error,
+duplicate key, undefined alias, or failed include in a later document still fails the whole
+include. The parser is eager: no lazy iterator or partially validated result escapes.
+
+Each document gets normal YAML composition and nested include behavior, with paths relative
+to the included stream's source. Anchors and aliases are local to each document: names may be
+reused in a later document, but an alias cannot reference an anchor from an earlier document.
+The leading `%LOADER YamlCompose` header is optional in an included stream; the including
+loader already selected composition for it. With `recursive_dispatch=False`, all documents
+instead use the configured ordinary YAML loader and do not enable nested package tags.
+Caller-provided YAML constructors and duplicate-key checks apply to every document in either mode.
+
+All documents share the existing source and resource controls. The stream is one file read,
+its entire byte size counts against file/total-byte limits, and every nested include uses the
+same depth/count/byte budget. Recursive cycle detection uses canonical source identity, not
+the document index or selector. Selection cannot bypass a cycle in an unselected document.
+There is no separate document-count limit. As with ordinary YAML, byte limits do not bound
+all parser CPU or expanded object memory.
+
+The resolver's selected format must be YAML; JSON, JSONL, TOML, CSV, and other registered
+non-YAML formats produce an explicit error for `!include-all`. Unknown suffixes retain the
+existing fallback to YAML. Resolver-provided `format_id="yaml"` also works. Record formats
+already return record lists through ordinary `!include`; they do not need this tag.
+
+A YAML sequence inside one document is distinct from a multi-document stream. Ordinary
+`!include` remains single-document and rejects multiple documents, even with a fragment.
+Its `#/0` selects a sequence element, not a stream document. The always-list behavior of
+`!include-all` is explicit yaml-compose behavior, not ordinal multi-document addressing
+defined by RFC 9512. Named-anchor fragments such as `#*name` remain unsupported.
+
+A selected mapping can be a `<<` or `<<<` source. An unselected document list cannot: there is
+no implicit stream merge, even when every document is a mapping. Choose a mapping with a
+fragment, or give an explicit YAML list of separately selected mapping sources. Existing
+merge precedence is unchanged. Use `!spread` to insert the complete document list into an
+outer sequence; that spreads documents, not the contents of sequence-valued documents.
+
+### Scalar includes
 
 `!include-text` and `!include-raw` return scalar strings and bytes. They accept `#` to select
 the whole value, but non-root JSON Pointers are errors; a string is not treated as a character

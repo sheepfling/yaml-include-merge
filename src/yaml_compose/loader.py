@@ -61,6 +61,7 @@ from .tags import (
     COMPOSE_LOADER_TAG,
     DEEP_MERGE_KEY,
     DELETE_TAG,
+    INCLUDE_ALL_TAG,
     INCLUDE_RAW_TAG,
     INCLUDE_TABLE_TAG,
     INCLUDE_TAG,
@@ -453,6 +454,10 @@ class IncludeLoader(SafeLoader):
         return loader._include(node)
 
     @staticmethod
+    def _construct_include_all(loader: IncludeLoader, node: Node) -> object:
+        return loader._include(node, all_documents=True)
+
+    @staticmethod
     def _construct_include_table(loader: IncludeLoader, node: Node) -> object:
         return loader._include(node, table=True)
 
@@ -769,9 +774,9 @@ class IncludeLoader(SafeLoader):
             _attach_include_route(exc, route)
             raise
 
-    def _include(self, node: Node, *, table: bool = False) -> object:
-        """Load a structured include, or an explicitly marked CSV table."""
-        tag = INCLUDE_TABLE_TAG if table else INCLUDE_TAG
+    def _include(self, node: Node, *, table: bool = False, all_documents: bool = False) -> object:
+        """Load a structured value, all YAML documents, or an explicit table."""
+        tag = INCLUDE_ALL_TAG if all_documents else INCLUDE_TABLE_TAG if table else INCLUDE_TAG
         frame = self._route_frame(node, tag=tag)
         route = (*self.include_route, frame)
         try:
@@ -783,6 +788,12 @@ class IncludeLoader(SafeLoader):
                 _include_error(node, str(exc), exc, tag=tag)
             descriptor = selection.descriptor
             adapter = selection.adapter
+            if all_documents and adapter is not None:
+                _include_error(
+                    node,
+                    f"{INCLUDE_ALL_TAG} requires a YAML source; resolved as {descriptor.format_id!r}",
+                    tag=tag,
+                )
             if table:
                 if descriptor.capability != "table" or adapter is None:
                     _include_error(
@@ -866,6 +877,7 @@ class IncludeLoader(SafeLoader):
                             include_search=self.include_search,
                             allow_absolute_includes=self.allow_absolute_includes,
                             include_route=route,
+                            all_documents=all_documents,
                         ),
                         route,
                         fragment=fragment,
@@ -873,6 +885,18 @@ class IncludeLoader(SafeLoader):
                 finally:
                     self.budget.current_depth -= 1
             ordinary_text, _ = _strip_loader_directive(text)
+            if all_documents:
+                return self._remember_include_result(
+                    node,
+                    list(
+                        yaml.load_all(
+                            _NamedStringIO(ordinary_text, source_label),
+                            Loader=cast(type[SafeLoader], ordinary_loader(self.yaml_loader)),
+                        )
+                    ),
+                    route,
+                    fragment=fragment,
+                )
             return self._remember_include_result(
                 node,
                 yaml.load(
@@ -1071,6 +1095,10 @@ IncludeLoader.add_constructor(
     IncludeLoader._construct_include,  # pyright: ignore[reportPrivateUsage]
 )
 IncludeLoader.add_constructor(
+    INCLUDE_ALL_TAG,
+    IncludeLoader._construct_include_all,  # pyright: ignore[reportPrivateUsage]
+)
+IncludeLoader.add_constructor(
     INCLUDE_TABLE_TAG,
     IncludeLoader._construct_include_table,  # pyright: ignore[reportPrivateUsage]
 )
@@ -1121,6 +1149,7 @@ def _load_composed_text(
     include_search: IncludeSearch,
     allow_absolute_includes: bool,
     include_route: tuple[IncludeRouteFrame, ...] = (),
+    all_documents: bool = False,
 ) -> object:
     """Parse text with include behavior using already normalized filesystem state."""
     loader = configured_include_loader(yaml_loader, IncludeLoader)(
@@ -1140,7 +1169,13 @@ def _load_composed_text(
         include_route=include_route,
     )
     try:
-        result = loader.get_single_data()
+        if all_documents:
+            documents: list[object] = []
+            while loader.check_data():  # pyright: ignore[reportUnknownMemberType]
+                documents.append(loader.get_data())
+            result = documents
+        else:
+            result = loader.get_single_data()
     except yaml.YAMLError as exc:
         _attach_include_route(exc, include_route)
         raise
