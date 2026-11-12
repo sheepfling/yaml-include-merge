@@ -2,10 +2,10 @@
 
 Keep this module independent of yaml_compose imports: the parent locates its
 packaged resource, while ``python -I`` deliberately ignores the working
-directory and PYTHONPATH. The optional engine must be installed in the active
+directory and PYTHONPATH. The required engine must be installed in the active
 interpreter's environment. This boundary permits the parent to terminate an
 expensive query at its deadline; it is not a speed optimization or OS sandbox.
-JSON Pointer does not use this worker or require an optional dependency.
+JSON Pointer does not use this worker or require a query engine.
 """
 
 from __future__ import annotations
@@ -50,14 +50,11 @@ class _EnvironmentFactory(Protocol):
 
 def _evaluate(query: str, document: str, max_matches: int, max_output_bytes: int) -> bytes:
     """Evaluate a query and serialize its complete, size-limited nodelist."""
-    try:
-        engine = importlib.import_module("jsonpath")
-        # The strict extra supplies RFC 9485 regex validation and matching.
-        # Do not silently fall back to Python re's different syntax.
-        importlib.import_module("regex")
-        importlib.import_module("iregexp_check")
-    except ImportError as exc:
-        raise ValueError("JSONPath requires the optional dependency; install 'yaml-compose[jsonpath]'") from exc
+    engine = importlib.import_module("jsonpath")
+    # Required strict dependencies supply RFC 9485 validation and matching.
+    # Fail on an incomplete installation rather than changing regex semantics.
+    importlib.import_module("regex")
+    importlib.import_module("iregexp_check")
     factory = cast(_EnvironmentFactory, engine.JSONPathEnvironment)
     compiled = factory(strict=True).compile(query)
     output = BytesIO()

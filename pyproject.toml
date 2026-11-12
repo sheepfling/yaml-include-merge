@@ -13,6 +13,7 @@ maintainers = [{name = "sheepfling"}]
 requires-python = ">=3.10"
 dependencies = [
     "PyYAML>=6.0,<7",
+    "python-jsonpath[strict]>=2.0,<3",
     "tomli>=2; python_version < '3.11'",
     "typing_extensions>=4.6; python_version < '3.13'",
 ]
@@ -38,8 +39,7 @@ Changelog = "https://github.com/sheepfling/yaml-include-merge/blob/main/CHANGELO
 
 [project.optional-dependencies]
 json5 = ["json5>=0.17.3,<0.18"]
-jsonpath = ["python-jsonpath[strict]>=2.0,<3"]
-test = ["pytest>=8.3", "pytest-cov>=6.0", "json5>=0.17.3,<0.18", "python-jsonpath[strict]>=2.0,<3"]
+test = ["pytest>=8.3", "pytest-cov>=6.0", "json5>=0.17.3,<0.18"]
 lint = ["pyright>=1.1.414", "ruff>=0.9", "typing_extensions>=4.16"]
 dev = [
     "build>=1.2",

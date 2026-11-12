@@ -12,7 +12,7 @@
 - Add text encoding and inclusive physical-line selection to `!include-text`, and offset/length
   byte selection to `!include-raw`. Validate options before opening and charge complete reads
   against existing budgets before selecting any range.
-- Add optional explicit JSONPath selection through the `!include` option `json_path`,
+- Add default-install JSONPath selection through the `!include` option `json_path`,
   with a strict RFC 9535 engine, always-list results, JSON-domain validation, configurable
   input/result bounds, and isolated subprocess deadlines.
 - Add explicit `documents: all` on structured `!include` objects for YAML document streams, returning a document list

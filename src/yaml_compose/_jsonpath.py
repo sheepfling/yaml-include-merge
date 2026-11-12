@@ -1,4 +1,4 @@
-"""Bounded JSON snapshots and subprocess execution for optional JSONPath support."""
+"""Bounded JSON snapshots and subprocess execution for JSONPath support."""
 
 from __future__ import annotations
 
@@ -173,7 +173,7 @@ def select_jsonpath(value: object, query: str, limits: JsonPathLimits) -> list[o
     Duplicate matches and their order are preserved. Only exact builtin JSON
     types are accepted; tuples, YAML sets, timestamps, non-string object keys,
     non-finite numbers, custom subclasses, and cyclic aliases are rejected.
-    The optional ``python-jsonpath[strict]`` engine executes in an isolated
+    The required ``python-jsonpath[strict]`` engine executes in an isolated
     subprocess. Missing dependencies, invalid queries, and exceeded limits
     raise ``ValueError``. No application-supplied query is evaluated as Python.
     """

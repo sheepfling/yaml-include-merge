@@ -3,21 +3,22 @@
 `json_path` on an `!include` options mapping selects a list of values from a fully
 constructed source. It is a
 separate operation from JSON Pointer: its query is never appended to, parsed out of, or
-percent-decoded as part of a filename. Install the optional engine in the Python environment
-running yaml-compose:
+percent-decoded as part of a filename. JSONPath is included in a normal installation:
 
 ```shell
-python -m pip install 'yaml-compose[jsonpath]'
+python -m pip install yaml-compose
 ```
 
-The extra uses [python-jsonpath](https://jg-rp.github.io/python-jsonpath/) with its `strict`
+The package requires [python-jsonpath](https://jg-rp.github.io/python-jsonpath/) with its `strict`
 extra and `JSONPathEnvironment(strict=True)`. The upstream engine implements
 [RFC 9535](https://www.rfc-editor.org/rfc/rfc9535.html); yaml-compose delegates query parsing
 and evaluation rather than maintaining a second parser. Strict mode disables the engine's
 nonstandard query extensions. Its strict dependencies supply Unicode regular expressions
 and I-Regexp checking. Queries do not execute Python code, and yaml-compose does not register
-custom functions or callbacks. Missing dependencies produce a marked error with the extra's
-installation command. Ordinary includes and JSON Pointers do not require this extra.
+custom functions or callbacks. An incomplete installation fails explicitly; there is no silent fallback to a different
+engine. JSON Pointer uses built-in exact traversal rather than this engine.
+Alternative YAML parser backends are separate from selection and remain future optional
+integrations; the supported default remains PyYAML.
 
 ## Syntax and results
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import json
 from io import StringIO
 
@@ -25,9 +26,9 @@ def _load_stream(content: str, query: str, *, many: bool, recursive: bool = True
 
 
 def _require_engine() -> None:
-    pytest.importorskip("jsonpath", reason="optional python-jsonpath engine is not installed")
-    pytest.importorskip("regex", reason="optional strict JSONPath regex dependency is not installed")
-    pytest.importorskip("iregexp_check", reason="optional strict JSONPath regex validator is not installed")
+    importlib.import_module("jsonpath")
+    importlib.import_module("regex")
+    importlib.import_module("iregexp_check")
 
 
 @pytest.mark.parametrize("many", [False, True])

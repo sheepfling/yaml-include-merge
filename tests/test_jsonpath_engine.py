@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-import importlib.util
+import importlib
 import json
 import os
 import subprocess
@@ -288,22 +288,15 @@ def test_worker_limits_before_retaining_complete_output(
 
 
 @pytest.mark.parametrize("missing", ["jsonpath", "regex", "iregexp_check"])
-def test_missing_engine_or_strict_extras_explains_install(monkeypatch: pytest.MonkeyPatch, missing: str) -> None:
+def test_incomplete_installation_fails_without_regex_fallback(monkeypatch: pytest.MonkeyPatch, missing: str) -> None:
     def import_module(name: str) -> ModuleType:
         if name == missing:
             raise ModuleNotFoundError(name)
         return ModuleType(name)
 
     monkeypatch.setattr(_jsonpath_worker.importlib, "import_module", import_module)
-    with pytest.raises(ValueError, match=r"install 'yaml-compose\[jsonpath\]'"):
+    with pytest.raises(ModuleNotFoundError, match=missing):
         _jsonpath_worker._evaluate("$", "null", 1, 10)
-
-
-def test_actual_subprocess_reports_missing_optional_dependency() -> None:
-    if importlib.util.find_spec("jsonpath") is not None:
-        pytest.skip("python-jsonpath is installed; mocked tests cover individual missing dependencies")
-    with pytest.raises(ValueError, match=r"install 'yaml-compose\[jsonpath\]'"):
-        select_jsonpath(None, "$", DEFAULT_JSONPATH_LIMITS)
 
 
 @pytest.mark.parametrize("invalid_header", [False, True])
@@ -330,9 +323,9 @@ def test_worker_main_protocol_handles_success_and_failure(
 
 
 def _require_engine() -> None:
-    pytest.importorskip("jsonpath", reason="optional python-jsonpath engine is not installed")
-    pytest.importorskip("regex", reason="optional strict JSONPath regex dependency is not installed")
-    pytest.importorskip("iregexp_check", reason="optional strict JSONPath regex validator is not installed")
+    importlib.import_module("jsonpath")
+    importlib.import_module("regex")
+    importlib.import_module("iregexp_check")
 
 
 @pytest.mark.parametrize(

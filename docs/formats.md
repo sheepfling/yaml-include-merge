@@ -111,7 +111,7 @@ source bytes and nested reads count toward the existing limits, even when the re
 Repeated includes count as separate reads as before. Resolvers receive only the literal path;
 their returned source identity still controls format dispatch, confinement, and cycle checks.
 
-Use the separate `json_path` option for explicit JSONPath queries. It uses an optional
+Use the separate `json_path` option for explicit JSONPath queries. It uses the default-installed
 strict engine with an always-list result, JSON-compatible input requirements, and per-selection limits
 described below. These selectors are mutually exclusive and supported only on `!include`.
 See [JSONPath selection](jsonpath.md) for filters, slices, functions, and limits.
@@ -271,7 +271,7 @@ recent_documents_per_file: !include
 For the first example, `/1/settings` selects from the document list for each file. If either
 file lacks that path, the whole operation fails. JSONPath's zero/one/many matches remain a
 list for each file, including `[]` for a file with no matches. Both selectors retain their
-single-source validation rules and JSONPath's optional dependency and resource controls.
+single-source validation rules and JSONPath's required engine and resource controls.
 
 The last example returns one list of up to two documents per file, not the last two files.
 The same `sources` request does not select across the outer file collection. Put that

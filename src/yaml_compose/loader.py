@@ -1772,7 +1772,7 @@ class YamlConfigLoader(Generic[_LoaderValue_co]):
         and dotenv adapters. CSV is selected with ``!include-table``. The
         ``!include-text`` and ``!include-raw`` tags use the same resolver and
         budgets without parsing the selected source format. ``jsonpath_limits`` supplies
-        an immutable per-selection policy for optional ``!include`` JSONPath selection.
+        an immutable per-selection policy for ``!include`` JSONPath selection.
         """
         validate_yaml_loader(yaml_loader)
         self.include_resolver = include_resolver

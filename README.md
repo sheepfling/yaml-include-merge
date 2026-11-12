@@ -76,7 +76,7 @@ how the composition rules relate to YAML and PyYAML.
 
 ## Select with JSONPath
 
-For filters, wildcards, slices, and multiple results, install `yaml-compose[jsonpath]` and use
+For filters, wildcards, slices, and multiple results, the default installation includes JSONPath. Use
 an explicit value selector:
 
 ```yaml
@@ -86,7 +86,7 @@ enabled: !include {path: catalog.json, json_path: '$.items[?@.enabled == true]'}
 `json_path` always returns a list, even with zero or one match. JSONPath and JSON Pointer
 are mutually exclusive options on `!include`, separate from the literal path. See
 [JSONPath selection](docs/jsonpath.md) for strict syntax, supported values, resource limits,
-optional-dependency setup, and subprocess requirements.
+dependency and subprocess requirements.
 
 ## Include other files
 
