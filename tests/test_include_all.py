@@ -21,10 +21,15 @@ from yaml_compose import (
 )
 
 
-def load_stream_include(content: str, *, fragment: str = "", recursive: bool = True) -> object:
+def load_stream_include(content: str, *, pointer: str | None = None, recursive: bool = True) -> object:
     root = MemoryRoot("stream")
+    spec = (
+        "!include-all bundle.yaml"
+        if pointer is None
+        else f'!include-all {{path: bundle.yaml, json_pointer: "{pointer}"}}'
+    )
     return load_yaml_compose(
-        StringIO(f'!include-all "bundle.yaml{fragment}"\n'),
+        StringIO(spec),
         allowed_roots=[root],
         include_resolver=MemoryIncludeResolver(root, {"bundle.yaml": content}),
         recursive_dispatch=recursive,
@@ -49,25 +54,25 @@ def load_stream_include(content: str, *, fragment: str = "", recursive: bool = T
 def test_all_documents_always_returns_list(content: str, expected: object, recursive: bool) -> None:
     assert INCLUDE_ALL_TAG == "!include-all"
     assert load_stream_include(content, recursive=recursive) == expected
-    assert load_stream_include(content, fragment="#", recursive=recursive) == expected
+    assert load_stream_include(content, pointer="", recursive=recursive) == expected
 
 
 @pytest.mark.parametrize("recursive", [True, False])
 def test_pointer_selects_from_document_list_without_flattening(recursive: bool) -> None:
     content = "---\n[zero, one]\n---\nsettings: {port: 8080}\n"
-    assert load_stream_include(content, fragment="#/0/1", recursive=recursive) == "one"
-    assert load_stream_include(content, fragment="#/1/settings", recursive=recursive) == {"port": 8080}
+    assert load_stream_include(content, pointer="/0/1", recursive=recursive) == "one"
+    assert load_stream_include(content, pointer="/1/settings", recursive=recursive) == {"port": 8080}
     with pytest.raises(yaml.YAMLError, match="out of bounds"):
-        load_stream_include(content, fragment="#/2", recursive=recursive)
+        load_stream_include(content, pointer="/2", recursive=recursive)
     with pytest.raises(yaml.YAMLError, match="out of bounds"):
-        load_stream_include("", fragment="#/0", recursive=recursive)
-    assert load_stream_include("---\n", fragment="#/0", recursive=recursive) is None
+        load_stream_include("", pointer="/0", recursive=recursive)
+    assert load_stream_include("---\n", pointer="/0", recursive=recursive) is None
 
 
 @pytest.mark.parametrize("recursive", [True, False])
 def test_anchors_are_document_local(recursive: bool) -> None:
     content = "---\nfirst: &shared {value: one}\nalias: *shared\n---\nsecond: &shared {value: two}\nalias: *shared\n"
-    assert load_stream_include(content, fragment="#/1/alias/value", recursive=recursive) == "two"
+    assert load_stream_include(content, pointer="/1/alias/value", recursive=recursive) == "two"
     with pytest.raises(yaml.YAMLError, match="undefined alias"):
         load_stream_include("---\nfirst: &shared 1\n---\nsecond: *shared\n", recursive=recursive)
 
@@ -76,10 +81,10 @@ def test_anchors_are_document_local(recursive: bool) -> None:
 @pytest.mark.parametrize("last", ["broken: [\n", "duplicate: 1\nduplicate: 2\n", "bad: *missing\n"])
 def test_late_document_errors_are_not_hidden_by_pointer(last: str, recursive: bool) -> None:
     with pytest.raises(yaml.YAMLError) as caught:
-        load_stream_include("---\nselected: 1\n---\n" + last, fragment="#/0", recursive=recursive)
+        load_stream_include("---\nselected: 1\n---\n" + last, pointer="/0", recursive=recursive)
     route = get_include_route(caught.value)
     assert route[-1].tag == "!include-all"
-    assert route[-1].requested_path == "bundle.yaml#/0"
+    assert route[-1].requested_path == "bundle.yaml"
     assert "bundle.yaml" in str(caught.value)
 
 
@@ -97,7 +102,9 @@ def test_nested_includes_and_overlays_finish_before_stream_selection() -> None:
             },
         ),
     )
-    assert loader.load_include(StringIO('<<<: !include-all "dir/bundle.yaml#/1/settings"\nlocal: true\n')) == {
+    assert loader.load_include(
+        StringIO('<<<: !include-all {path: "dir/bundle.yaml", json_pointer: "/1/settings"}\nlocal: true\n')
+    ) == {
         "host": "localhost",
         "port": 8080,
         "local": True,
@@ -157,7 +164,7 @@ def test_custom_yaml_loader_is_used_for_every_document(recursive: bool) -> None:
 
 def test_nonrecursive_mode_does_not_enable_nested_include_tags() -> None:
     with pytest.raises(yaml.YAMLError, match="could not determine a constructor"):
-        load_stream_include("---\none\n---\n!include other.yaml\n", fragment="#/0", recursive=False)
+        load_stream_include("---\none\n---\n!include other.yaml\n", pointer="/0", recursive=False)
 
 
 @pytest.mark.parametrize(
@@ -173,7 +180,7 @@ def test_shared_limits_cover_whole_stream(limits: IncludeLimits) -> None:
     root = MemoryRoot("budget")
     with pytest.raises(yaml.YAMLError, match=r"maximum|limit"):
         load_yaml_compose(
-            StringIO('!include-all "bundle.yaml#/0"\n'),
+            StringIO('!include-all {path: "bundle.yaml", json_pointer: "/0"}\n'),
             allowed_roots=[root],
             include_limits=limits,
             include_resolver=MemoryIncludeResolver(root, {"bundle.yaml": "---\n1\n---\nlong-value\n"}),
@@ -195,7 +202,7 @@ def test_nested_reads_in_unselected_documents_share_budget() -> None:
     root = MemoryRoot("nested-budget")
     with pytest.raises(yaml.YAMLError, match="maximum include count"):
         load_yaml_compose(
-            StringIO('!include-all "bundle.yaml#/0"\n'),
+            StringIO('!include-all {path: "bundle.yaml", json_pointer: "/0"}\n'),
             allowed_roots=[root],
             max_include_files=1,
             include_resolver=MemoryIncludeResolver(
@@ -213,12 +220,12 @@ def test_recursive_cycle_detection_uses_source_not_selector(tag: str) -> None:
     root = MemoryRoot("cycle")
     with pytest.raises(yaml.YAMLError, match="include cycle detected"):
         load_yaml_compose(
-            StringIO('!include-all "bundle.yaml#/0"\n'),
+            StringIO('!include-all {path: "bundle.yaml", json_pointer: "/0"}\n'),
             allowed_roots=[root],
             include_resolver=MemoryIncludeResolver(
                 root,
                 {
-                    "bundle.yaml": f'---\none\n---\n{tag} "bundle.yaml#/0"\n',
+                    "bundle.yaml": f'---\none\n---\n{tag} {{path: "bundle.yaml", json_pointer: "/0"}}\n',
                 },
             ),
         )
@@ -235,7 +242,7 @@ def test_resolver_source_format_and_closed_stream() -> None:
 
     assert (
         load_yaml_compose(
-            StringIO('!include-all "alias#/1"\n'),
+            StringIO('!include-all {path: "alias", json_pointer: "/1"}\n'),
             allowed_roots=[root],
             include_resolver=Resolver(),
         )
@@ -251,7 +258,9 @@ def test_filesystem_confines_stream_sources(test_path: Path) -> None:
     outside.write_text("---\none\n---\ntwo\n", encoding="utf-8")
     (allowed / "link.yaml").symlink_to(outside)
     config = allowed / "main.yaml"
-    config.write_text('%LOADER YamlCompose\n---\n!include-all "link.yaml#/0"\n', encoding="utf-8")
+    config.write_text(
+        '%LOADER YamlCompose\n---\n!include-all {path: "link.yaml", json_pointer: "/0"}\n', encoding="utf-8"
+    )
     with pytest.raises(yaml.YAMLError, match="outside the allowed roots"):
         load_yaml_file(config)
 
@@ -260,7 +269,7 @@ def test_ordinary_include_stays_single_document() -> None:
     root = MemoryRoot("ordinary")
     with pytest.raises(yaml.YAMLError, match="expected a single document"):
         load_yaml_compose(
-            StringIO('!include "bundle.yaml#/0"\n'),
+            StringIO('!include {path: "bundle.yaml", json_pointer: "/0"}\n'),
             allowed_roots=[root],
             include_resolver=MemoryIncludeResolver(root, {"bundle.yaml": "---\none\n---\ntwo\n"}),
         )
@@ -283,7 +292,7 @@ def test_late_parse_failure_disposes_yaml_loaders_and_closes_source(recursive: b
 
     with pytest.raises(yaml.YAMLError):
         load_yaml_compose(
-            StringIO('!include-all "bundle.yaml#/0"\n'),
+            StringIO('!include-all {path: "bundle.yaml", json_pointer: "/0"}\n'),
             allowed_roots=[root],
             include_resolver=Resolver(),
             yaml_loader=CustomLoader,

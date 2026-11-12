@@ -2,17 +2,21 @@
 
 ## Unreleased
 
-- Add optional explicit `!jsonpath [source, query]` selection using the strict RFC 9535 engine,
-  with always-list results, JSON-domain validation, configurable input/result bounds, and
-  isolated subprocess deadlines. Keep query text separate from include paths and fragments.
-
+- Add options mappings across all include tags while preserving every scalar path literally,
+  including filenames containing `#` and `%`. Structured includes support mutually exclusive
+  plain `json_pointer` and `json_path` fields, separate from the source path.
+- Add text encoding and inclusive physical-line selection to `!include-text`, and offset/length
+  byte selection to `!include-raw`. Validate options before opening and charge complete reads
+  against existing budgets before selecting any range.
+- Add optional explicit JSONPath selection through `json_path` or `!jsonpath [source, query]`,
+  with a strict RFC 9535 engine, always-list results, JSON-domain validation, configurable
+  input/result bounds, and isolated subprocess deadlines.
 - Add explicit `!include-all` for YAML document streams, always returning a document list
-  before optional fragment selection. Keep ordinary `!include` single-document semantics,
-  document-local anchors, complete-stream validation, and shared include budgets.
-
-- Add URI-fragment JSON Pointer selection to includes, including structured mapping members,
-  sequence elements, JSONL/NDJSON records, and CSV rows/cells. Preserve full-source validation,
-  include routes, resolver confinement, and resource budgets before selection.
+  before optional selection. Keep ordinary `!include` single-document semantics, document-local
+  anchors, complete-stream validation, and shared include budgets.
+- Add plain JSON Pointer selection across structured mapping members, sequence elements,
+  JSONL/NDJSON records, and CSV rows/cells. Preserve full-source validation, include routes,
+  resolver confinement, and resource budgets before selection.
 
 ## 0.1.1
 

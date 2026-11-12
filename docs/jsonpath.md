@@ -1,6 +1,7 @@
 # JSONPath selection
 
-`!jsonpath [source, query]` selects a list of values from a fully constructed source. It is a
+`json_path` on a structured include mapping, or `!jsonpath [source, query]`, selects a list
+of values from a fully constructed source. It is a
 separate operation from JSON Pointer: its query is never appended to, parsed out of, or
 percent-decoded as part of a filename. Install the optional engine in the Python environment
 running yaml-compose:
@@ -23,15 +24,18 @@ installation command. Ordinary includes and JSON Pointers do not require this ex
 ```yaml
 %LOADER YamlCompose
 ---
-enabled: !jsonpath [!include catalog.json, '$.items[?@.enabled == true]']
-names: !jsonpath [!include catalog.json, '$.items[*].name']
-recent: !jsonpath [!include-all events.yaml, '$[-3:]']
-first_cells: !jsonpath [!include-table people.csv, '$[*][0]']
+enabled: !include {path: catalog.json, json_path: '$.items[?@.enabled == true]'}
+names: !include {path: catalog.json, json_path: '$.items[*].name'}
+recent: !include-all {path: events.yaml, json_path: '$[-3:]'}
+first_cells: !include-table {path: people.csv, json_path: '$[*][0]'}
 inline: !jsonpath [{items: [one, two]}, '$.items[0]']
 steps: [start, !spread [!jsonpath [!include workflow.json, '$.steps[*]']], finish]
 ```
 
-The tag takes exactly two items. The query must be a literal YAML string, not another tag,
+`json_path` is supported by `!include`, `!include-all`, and `!include-table`; it cannot be
+combined with `json_pointer` in one include mapping. `!include-text` and `!include-raw` use
+their own line/byte-range options instead. The separate `!jsonpath` tag takes exactly two items.
+The query must be a literal YAML string, not another tag,
 a list, or a mapping. Quote queries to avoid YAML punctuation and implicit-scalar rules.
 Sources can be includes, inline values, or anchors. The source is completely parsed and its
 nested composition finished before selection; malformed unselected data still fails. Include
@@ -65,7 +69,8 @@ keys or changing YAML-only values to fit JSON semantics.
 Cyclic YAML aliases are rejected. Repeated non-cyclic aliases are allowed but each expansion
 counts toward the input limits. Evaluation uses a serialized snapshot; matches are returned
 as ordinary JSON-compatible Python values without preserving source object or alias identity.
-A text include can be queried as a string scalar; a raw-byte include is outside this input domain.
+The separate `!jsonpath` tag can query a text include as a string scalar; raw bytes are outside
+this input domain. Text include mappings themselves do not accept JSON selector fields.
 
 ## Evaluation limits and process requirements
 

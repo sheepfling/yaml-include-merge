@@ -36,7 +36,7 @@ def test_tag_constructs_source_before_selection(monkeypatch: pytest.MonkeyPatch)
     root = MemoryRoot("jsonpath")
     resolver = MemoryIncludeResolver(root, {"base.yaml": "defaults: {port: 80, host: localhost}\n"})
     result = load_yaml_compose(
-        StringIO("!jsonpath [{<<<: !include 'base.yaml#/defaults', port: 8080}, '$']\n"),
+        StringIO("!jsonpath [{<<<: !include {path: 'base.yaml', json_pointer: '/defaults'}, port: 8080}, '$']\n"),
         include_resolver=resolver,
         allowed_roots=[root],
     )
@@ -49,7 +49,7 @@ def test_tag_constructs_source_before_selection(monkeypatch: pytest.MonkeyPatch)
 @pytest.mark.parametrize(
     ("source", "files", "expected"),
     [
-        ("!include 'data.json#/items'", {"data.json": '{"items": [1, 2]}'}, [1, 2]),
+        ("!include {path: 'data.json', json_pointer: '/items'}", {"data.json": '{"items": [1, 2]}'}, [1, 2]),
         ("!include-all data.yaml", {"data.yaml": "---\na: 1\n---\na: 2\n"}, [{"a": 1}, {"a": 2}]),
         ("!include-table data.csv", {"data.csv": "a,b\n1,2\n"}, [["a", "b"], ["1", "2"]]),
         ("!include-text data.txt", {"data.txt": "123"}, "123"),

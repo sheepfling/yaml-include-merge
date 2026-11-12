@@ -23,6 +23,7 @@ from yaml.error import MarkedYAMLError
 from yaml.resolver import BaseResolver
 
 from ._compat import _TypeVar
+from ._include_specs import IncludeSpec, parse_include_spec
 from ._jsonpath import DEFAULT_JSONPATH_LIMITS, JsonPathLimits, select_jsonpath
 from ._overlays import DELETE as _DELETE
 from ._overlays import ReplaceMarker as _ReplaceMarker
@@ -31,7 +32,7 @@ from ._overlays import YamlDict, YamlIncludeError, YamlType
 from ._overlays import assert_no_markers as _assert_no_overlay_markers
 from ._overlays import merge_mappings as _merge_mappings
 from ._search import IncludeSearch, validate_include_search
-from ._selectors import select_json_pointer, split_include_reference
+from ._selectors import select_json_pointer
 from ._streams import read_bounded
 from ._unset import UNSET, UnsetType
 from ._yaml_loader import configured_include_loader, ordinary_loader, validate_yaml_loader
@@ -592,6 +593,11 @@ class IncludeLoader(SafeLoader):
             stream_name = getattr(self, "name", None)
             including_source = stream_name if isinstance(stream_name, str) else "<yaml stream>"
         requested_path = node.value if isinstance(node, ScalarNode) else None
+        if isinstance(node, MappingNode):
+            for key, value in node.value:
+                if isinstance(key, ScalarNode) and key.value == "path" and isinstance(value, ScalarNode):
+                    requested_path = value.value
+                    break
         return IncludeRouteFrame(
             including_source=including_source,
             line=node.start_mark.line + 1,
@@ -607,17 +613,21 @@ class IncludeLoader(SafeLoader):
         value: object,
         route: tuple[IncludeRouteFrame, ...],
         *,
-        fragment: str | None = None,
+        spec: IncludeSpec,
     ) -> object:
         """Select a value before composition and keep its originating include route."""
-        if fragment is not None:
+        if spec.json_pointer is not None or spec.json_path is not None:
             frame = route[-1]
+            selector = spec.json_pointer if spec.json_pointer is not None else spec.json_path
             try:
-                value = select_json_pointer(value, fragment)
-            except ValueError as exc:
+                if spec.json_pointer is not None:
+                    value = select_json_pointer(value, spec.json_pointer)
+                elif spec.json_path is not None:
+                    value = select_jsonpath(value, spec.json_path, self.jsonpath_limits)
+            except (ValueError, TypeError, RuntimeError) as exc:
                 _include_error(
                     node,
-                    f"cannot select {fragment!r} from include {frame.requested_path!r}: {exc}",
+                    f"cannot select {selector!r} from include {frame.requested_path!r}: {exc}",
                     exc,
                     tag=frame.tag,
                 )
@@ -657,18 +667,20 @@ class IncludeLoader(SafeLoader):
         node: Node,
         *,
         tag: str,
-    ) -> tuple[ResolvedInclude, IncludeSource, str, IncludeRouteFrame, str | None]:
+    ) -> tuple[ResolvedInclude, IncludeSource, str, IncludeRouteFrame, IncludeSpec]:
         """Resolve and validate one include source under the current loader context."""
         frame = self._route_frame(node, tag=tag)
         route = (*self.include_route, frame)
         try:
-            if not isinstance(node, ScalarNode):
-                _include_error(node, f"{tag} expects a scalar path", tag=tag)
-            name = self.construct_scalar(node)
-            if not name:
-                _include_error(node, f"{tag} expects a non-empty path", tag=tag)
             try:
-                name, fragment = split_include_reference(name)
+                if isinstance(node, ScalarNode):
+                    name = self.construct_scalar(node)
+                    if not name:
+                        raise ValueError(f"{tag} expects a non-empty path")
+                    spec = IncludeSpec(name)
+                else:
+                    spec = parse_include_spec(node, tag=tag)
+                name = spec.path
                 validate_include_name(name, allow_absolute=self.allow_absolute_includes)
             except ValueError as exc:
                 _include_error(node, str(exc), exc, tag=tag)
@@ -717,7 +729,7 @@ class IncludeLoader(SafeLoader):
                     tag=tag,
                 )
 
-            return resolved, include_source, source_label, frame, fragment
+            return resolved, include_source, source_label, frame, spec
         except yaml.YAMLError as exc:
             _attach_include_route(exc, route)
             raise
@@ -774,22 +786,29 @@ class IncludeLoader(SafeLoader):
             _include_error(node, f"cannot read include source {source_label}: {exc}", exc, tag=tag)
 
     def _include_text(self, node: Node) -> str:
-        """Include a bounded source as exact, strictly decoded UTF-8 text."""
+        """Include bounded, strictly decoded text with an optional physical line range."""
+        encoding = "utf-8"
         frame = self._route_frame(node, tag=INCLUDE_TEXT_TAG)
         route = (*self.include_route, frame)
         try:
-            resolved, _include_source, source_label, frame, fragment = self._resolve_include_source(
+            resolved, _include_source, source_label, frame, spec = self._resolve_include_source(
                 node,
                 tag=INCLUDE_TEXT_TAG,
             )
             route = (*self.include_route, frame)
             content = self._read_include_source(node, resolved, source_label, tag=INCLUDE_TEXT_TAG)
-            return cast(str, self._remember_include_result(node, content.decode("utf-8"), route, fragment=fragment))
-        except UnicodeDecodeError as exc:
+            encoding = spec.encoding
+            text = content.decode(encoding)
+            if spec.select_lines:
+                with StringIO(text, newline="") as stream:
+                    text = "".join(stream.readlines()[spec.line_start - 1 : spec.line_end])
+            return cast(str, self._remember_include_result(node, text, route, spec=spec))
+        except (UnicodeError, LookupError, TypeError) as exc:
             try:
                 _include_error(
                     node,
-                    f"include source {frame.resolved_source or frame.requested_path or '<unknown>'} is not UTF-8 text",
+                    f"include source {frame.resolved_source or frame.requested_path or '<unknown>'} is not "
+                    f"{('UTF-8' if encoding == 'utf-8' else encoding)} text",
                     exc,
                     tag=INCLUDE_TEXT_TAG,
                 )
@@ -805,12 +824,14 @@ class IncludeLoader(SafeLoader):
         frame = self._route_frame(node, tag=INCLUDE_RAW_TAG)
         route = (*self.include_route, frame)
         try:
-            resolved, _include_source, source_label, frame, fragment = self._resolve_include_source(
+            resolved, _include_source, source_label, frame, spec = self._resolve_include_source(
                 node, tag=INCLUDE_RAW_TAG
             )
             route = (*self.include_route, frame)
             content = self._read_include_source(node, resolved, source_label, tag=INCLUDE_RAW_TAG)
-            return cast(bytes, self._remember_include_result(node, content, route, fragment=fragment))
+            end = None if spec.length is None else spec.offset + spec.length
+            content = content[spec.offset : end]
+            return cast(bytes, self._remember_include_result(node, content, route, spec=spec))
         except yaml.YAMLError as exc:
             _attach_include_route(exc, route)
             raise
@@ -821,7 +842,7 @@ class IncludeLoader(SafeLoader):
         frame = self._route_frame(node, tag=tag)
         route = (*self.include_route, frame)
         try:
-            resolved, include_source, source_label, frame, fragment = self._resolve_include_source(node, tag=tag)
+            resolved, include_source, source_label, frame, spec = self._resolve_include_source(node, tag=tag)
             route = (*self.include_route, frame)
             try:
                 selection = self.format_registry.select_format(include_source, format_id=resolved.format_id)
@@ -865,14 +886,14 @@ class IncludeLoader(SafeLoader):
                             tag=tag,
                         ),
                         route,
-                        fragment=fragment,
+                        spec=spec,
                     )
                 try:
                     return self._remember_include_result(
                         node,
                         cast(FormatAdapter, adapter).parse(format_input),
                         route,
-                        fragment=fragment,
+                        spec=spec,
                     )
                 except FormatDependencyError as exc:
                     _include_error(
@@ -922,7 +943,7 @@ class IncludeLoader(SafeLoader):
                             all_documents=all_documents,
                         ),
                         route,
-                        fragment=fragment,
+                        spec=spec,
                     )
                 finally:
                     self.budget.current_depth -= 1
@@ -937,7 +958,7 @@ class IncludeLoader(SafeLoader):
                         )
                     ),
                     route,
-                    fragment=fragment,
+                    spec=spec,
                 )
             return self._remember_include_result(
                 node,
@@ -946,7 +967,7 @@ class IncludeLoader(SafeLoader):
                     Loader=cast(type[SafeLoader], ordinary_loader(self.yaml_loader)),
                 ),
                 route,
-                fragment=fragment,
+                spec=spec,
             )
         except yaml.YAMLError as exc:
             _attach_include_route(exc, route)

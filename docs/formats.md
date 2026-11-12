@@ -32,70 +32,92 @@ standard JSON parser and deeply nested input may reach Python's recursion limit.
 [json5 0.17.3 package page](https://pypi.org/project/json5/0.17.3/) and its
 [maintainer documentation](https://github.com/dpranke/pyjson5/blob/main/README.md).
 
-## Select part of an include
+## Include options and selection
 
-Append a URI-fragment [JSON Pointer](https://www.rfc-editor.org/rfc/rfc6901#section-6)
-to select from the completed included value before it is inserted, merged, or spread into its
-parent document. This follows the single-document JSON Pointer convention in
-[RFC 9512 section 1.2](https://www.rfc-editor.org/rfc/rfc9512.html#section-1.2); the separate
-YAML `#*anchor` fragment syntax is not supported:
+Every include tag accepts either a scalar literal path or an options mapping with a required
+`path` string. The scalar form is unchanged: `!include "config#blue%20.yaml"` opens that exact
+local name. It does not split `#`, percent-decode names, or interpret URI references. The
+mapping form keeps the path and any selector separate:
 
 ```yaml
 %LOADER YamlCompose
 ---
-<<<: !include "radar_rotator.yaml#/radar"
-array: !include "hardware.yaml#/arrays/kbr"
-first_record: !include "records.jsonl#/0"
-first_name: !include-table "people.csv#/1/0"
-steps: [prepare, !spread [!include "workflow.yaml#/steps"], finish]
+<<<: !include {path: defaults.yaml, json_pointer: /service}
+array: !include {path: hardware.yaml, json_pointer: /arrays/kbr}
+first_record: !include {path: records.jsonl, json_pointer: /0}
+first_name: !include-table {path: people.csv, json_pointer: /1/0}
+steps: [prepare, !spread [!include {path: workflow.yaml, json_pointer: /steps}], finish]
+enabled: !include {path: catalog.json, json_path: '$.items[?@.enabled == true]'}
 ```
 
-JSON Pointer selection is general, with no domain-specific names or expression language.
-For explicit JSONPath queries, see [JSONPath selection](jsonpath.md). It follows the
-parsed value's shape across YAML, JSON, JSONC, JSON5, TOML, INI, dotenv, record formats, and
-registered adapters:
+The supported fields are deliberately specific to each tag:
 
-- `#` selects the entire value, including a scalar or `null`. No fragment also includes the
-  whole value. `#/` selects the mapping key that is the empty string.
-- `#/arrays/kbr` follows exact string mapping keys. Keys are not coerced: a YAML integer key
+| Tag              | Fields beyond required `path`               |
+| ---------------- | ------------------------------------------- |
+| `!include`       | `json_pointer` or `json_path`               |
+| `!include-all`   | `json_pointer` or `json_path`               |
+| `!include-table` | `json_pointer` or `json_path`               |
+| `!include-text`  | `encoding`, `lines: {start: ..., end: ...}` |
+| `!include-raw`   | `offset`, `length`                          |
+
+Options must be literal values of the documented types. Unknown fields, duplicate fields,
+wrong types, and both JSON selectors together are errors before opening the source. Include
+specifications do not evaluate custom tags or YAML merge expressions. Booleans are not
+accepted as integer offsets or line numbers. `path` must be a nonempty string in a mapping;
+`{path: filename}` is equivalent to the existing scalar path form under default construction.
+A trusted custom loader's `construct_scalar` override still applies to scalar references;
+mapping fields remain inert literals.
+
+The local path uses the existing resolver and host-platform path policy. Windows fully
+qualified drive and UNC paths remain subject to `allow_absolute_includes` and allowed roots;
+drive-relative paths are rejected. Bare scheme-like names such as `foo:bar.yaml` are rejected
+by existing path validation; a POSIX relative spelling such as `./foo:bar.yaml` is unambiguous.
+No URL loading, path decoding, filesystem-existence guessing, or new network behavior is added.
+Quote paths with YAML-significant characters; on Windows, single-quoted YAML strings preserve
+backslashes literally, for example `path: 'C:\configs\config#blue.yaml'`.
+
+### Select part of an include
+
+`json_pointer` uses the plain string form of [JSON Pointer (RFC 6901)](https://www.rfc-editor.org/rfc/rfc6901).
+It selects from the completed included value before that value is inserted, merged, or spread
+into its parent document:
+
+- `""` selects the entire value, including a scalar or `null`. Omitting a selector also includes
+  the whole value. `/` selects the mapping key that is the empty string.
+- `/arrays/kbr` follows exact string mapping keys. Keys are not coerced: a YAML integer key
   `1` is different from the string key `"1"`.
-- `#/items/0` selects the first sequence element. Indexes are zero-based ASCII decimal
-  integers, without leading zeroes (except `0` itself). Negative indexes, `-`, slices,
-  wildcards, filters, and out-of-range indexes are errors.
-- Escape a literal `/` in a key as `~1` and a literal `~` as `~0`. For example,
-  `#/a~1b/m~0n` selects key `m~n` inside key `a/b`.
-- URI percent escapes decode once as strict UTF-8 before JSON Pointer escapes. Use
-  `#/space%20key` for `space key` and `#/%E2%98%83` for `☃`. A plus sign stays a plus sign.
-  Characters outside the URI fragment grammar, including spaces, `#`, and non-ASCII
-  characters, must be percent-encoded. Malformed percent escapes, invalid UTF-8, and invalid
-  `~` escapes are rejected.
+- `/items/0` selects the first sequence element. Indexes are zero-based ASCII decimal integers,
+  without leading zeroes except `0` itself. Negative indexes, `-`, slices, wildcards, filters,
+  and out-of-range indexes are errors.
+- Escape a literal `/` in a key as `~1` and a literal `~` as `~0`. For example, `/a~1b/m~0n`
+  selects key `m~n` inside key `a/b`. Invalid `~` escapes are rejected.
+- This is not a URI fragment. Do not add a leading `#`. Spaces, Unicode, `#`, and percent signs
+  are literal characters in the pointer string. `/space%20key` selects the key `space%20key`,
+  while `/space key` selects `space key`. `/☃` selects `☃` without percent encoding.
 
-JSONL and NDJSON are lists of parsed records: `#/2/name` selects the `name` member in the
-third record. CSV tables are lists of row lists: `#/1/0` selects the first cell of the second
-row, with the first row still ordinary data. Cells remain strings. A selected row remains a
-list; a selected cell is a scalar. Custom mapping values and list/tuple sequences follow the
-same rules. Other custom Python objects have no implicit attribute lookup. YAML aliases are
-followed through the constructed value; evaluation takes one step per pointer token, so a
-cyclic alias does not cause an unbounded walk. Existing composition restrictions on cyclic
-mapping overlays still apply.
+JSONL and NDJSON are lists of parsed records: `/2/name` selects the `name` member in the third
+record. CSV tables are lists of row lists: `/1/0` selects the first cell of the second row,
+with the first row still ordinary data. Cells remain strings. A selected row remains a list;
+a selected cell is a scalar. Custom mapping values and list/tuple sequences follow the same
+rules. Other custom Python objects have no implicit attribute lookup. YAML aliases are followed
+through the constructed value; evaluation takes one step per pointer token, so a cyclic alias
+does not cause an unbounded walk. Existing restrictions on cyclic mapping overlays still apply.
 
-The selected value must still satisfy the operation that consumes it. `<<<` and `<<` require
-mapping sources, and `!spread` requires a sequence. Selecting a scalar does not turn it into a
-mapping or a sequence. Errors identify the include reference, selector, and include-site mark;
-nested errors preserve the include route.
+The selected value must satisfy the operation that consumes it. `<<<` and `<<` require mapping
+sources, and `!spread` requires a sequence. Selecting a scalar does not convert it to a mapping
+or sequence. Errors identify the include path, selector, and include-site mark; nested errors
+preserve the include route.
 
 The complete source is read, parsed, and validated before selection. Nested YAML includes and
-composition inside that source finish first. Unselected malformed data and nested include
-cycles still fail. All source bytes and nested reads count toward the existing limits, even
-when the selected value is small; selectors are not a way to read outside configured roots or
-to bypass resource limits. Repeated includes count as separate reads as before.
+composition finish first. Unselected malformed data and nested include cycles still fail. All
+source bytes and nested reads count toward the existing limits, even when the result is small.
+Repeated includes count as separate reads as before. Resolvers receive only the literal path;
+their returned source identity still controls format dispatch, confinement, and cycle checks.
 
-The first `#` separates the local path from its selector. The local path is not URI-decoded;
-ordinary spaces, percent signs, relative paths, absolute-path policy, and search order retain
-their existing behavior. Resolvers receive only that path; their returned source identity
-still controls format dispatch, confinement, and cycle checks. A literal `#` in a filename is
-now reserved by this syntax: use a fragment-free alias through a custom resolver for such a
-source. Fragment-only same-document references are not supported.
+Use the separate `json_path` option for explicit JSONPath queries. It has the same optional
+strict engine, always-list result, JSON-compatible input requirements, and per-selection limits
+as `!jsonpath [source, query]`. These selectors are mutually exclusive in one include mapping.
+See [JSONPath selection](jsonpath.md) for filters, slices, functions, and limits.
 
 ### YAML document streams
 
@@ -105,61 +127,87 @@ Use `!include-all` explicitly to read a YAML stream as a list of all its documen
 %LOADER YamlCompose
 ---
 documents: !include-all "bundle.yaml"
-settings: !include-all "bundle.yaml#/1/settings"
+settings: !include-all {path: bundle.yaml, json_pointer: /1/settings}
+recent: !include-all {path: bundle.yaml, json_path: '$[-3:]'}
 steps: [prepare, !spread [!include-all "steps.yaml"], finish]
 ```
 
-Without a fragment, the result is always a list. An empty or comment-only stream gives `[]`;
-a single mapping gives `[mapping]`; an explicit empty document gives `[null]`. Multiple
-`---` documents produce one list item per document, in order. A document that is itself a
-sequence stays nested: two sequence documents become `[sequence1, sequence2]`, never one
-flattened sequence. Empty documents are retained and count when indexing.
+Without a selector, the result is always a list. An empty or comment-only stream gives `[]`;
+a single mapping gives `[mapping]`; an explicit empty document gives `[null]`. Multiple `---`
+documents produce one list item per document, in order. A document that is itself a sequence
+stays nested: two sequence documents become `[sequence1, sequence2]`, never one flattened list.
+Empty documents are retained and count when indexing.
 
-The JSON Pointer applies to this document list after the complete stream is parsed.
-`#/0` selects the first document, `#/1/settings` selects `settings` in the second document,
-and `#` retains the whole list. Even if a selector chooses an early document, a syntax error,
-duplicate key, undefined alias, or failed include in a later document still fails the whole
-include. The parser is eager: no lazy iterator or partially validated result escapes.
+A selector applies once to this document list after the complete stream is parsed. JSON Pointer
+`/0` selects the first document, `/1/settings` selects `settings` in the second document, and
+`""` retains the whole list. Even if a selector chooses an early document, a syntax error,
+duplicate key, undefined alias, or failed include in a later document fails the whole include.
+The parser is eager: no lazy iterator or partially validated result escapes.
 
 Each document gets normal YAML composition and nested include behavior, with paths relative
 to the included stream's source. Anchors and aliases are local to each document: names may be
-reused in a later document, but an alias cannot reference an anchor from an earlier document.
-The leading `%LOADER YamlCompose` header is optional in an included stream; the including
-loader already selected composition for it. With `recursive_dispatch=False`, all documents
-instead use the configured ordinary YAML loader and do not enable nested package tags.
-Caller-provided YAML constructors and duplicate-key checks apply to every document in either mode.
+reused in a later document, but an alias cannot reference an earlier document's anchor. The
+leading `%LOADER YamlCompose` header is optional in an included stream. With
+`recursive_dispatch=False`, all documents instead use the configured ordinary YAML loader and
+do not enable nested package tags. Custom constructors and duplicate-key checks apply in either mode.
 
-All documents share the existing source and resource controls. The stream is one file read,
-its entire byte size counts against file/total-byte limits, and every nested include uses the
-same depth/count/byte budget. Recursive cycle detection uses canonical source identity, not
-the document index or selector. Selection cannot bypass a cycle in an unselected document.
-There is no separate document-count limit. As with ordinary YAML, byte limits do not bound
-all parser CPU or expanded object memory.
+All documents share existing source and resource controls. The stream is one file read, its
+entire byte size counts against file/total-byte limits, and every nested include uses the same
+depth/count/byte budget. Cycle detection uses canonical source identity, not the document index
+or selector. There is no separate document-count limit. As with ordinary YAML, byte limits do
+not bound all parser CPU or expanded object memory.
 
-The resolver's selected format must be YAML; JSON, JSONL, TOML, CSV, and other registered
-non-YAML formats produce an explicit error for `!include-all`. Unknown suffixes retain the
-existing fallback to YAML. Resolver-provided `format_id="yaml"` also works. Record formats
-already return record lists through ordinary `!include`; they do not need this tag.
+The resolver's selected format must be YAML. Registered non-YAML formats produce an explicit
+error for `!include-all`; unknown suffixes retain the YAML fallback. Resolver-provided
+`format_id="yaml"` works. JSONL and NDJSON already return record lists through `!include`.
+Ordinary `!include` remains single-document and rejects multiple documents, even with a selector.
+Its `/0` selects a sequence element, not a stream document. This document-list model is explicit
+yaml-compose behavior, not the URI-fragment syntax defined by RFC 9512. Named-anchor fragments
+such as `#*name` are not supported.
 
-A YAML sequence inside one document is distinct from a multi-document stream. Ordinary
-`!include` remains single-document and rejects multiple documents, even with a fragment.
-Its `#/0` selects a sequence element, not a stream document. The always-list behavior of
-`!include-all` is explicit yaml-compose behavior, not ordinal multi-document addressing
-defined by RFC 9512. Named-anchor fragments such as `#*name` remain unsupported.
+A pointer-selected mapping can be a `<<` or `<<<` source. An unselected document list or JSONPath
+result list cannot: there is no implicit stream merge. Select a mapping with JSON Pointer, or
+use an explicit YAML list of separately selected mapping sources. Existing merge precedence is
+unchanged. `!spread` inserts documents into an outer sequence, not the contents of sequence-valued documents.
 
-A selected mapping can be a `<<` or `<<<` source. An unselected document list cannot: there is
-no implicit stream merge, even when every document is a mapping. Choose a mapping with a
-fragment, or give an explicit YAML list of separately selected mapping sources. Existing
-merge precedence is unchanged. Use `!spread` to insert the complete document list into an
-outer sequence; that spreads documents, not the contents of sequence-valued documents.
+### Text lines and encoding
 
-### Scalar includes
+`!include-text` defaults to strict UTF-8 decoding and returns the exact decoded string. Its
+mapping form can select a text encoding and an inclusive range of physical lines:
 
-`!include-text` and `!include-raw` return scalar strings and bytes. They accept `#` to select
-the whole value, but non-root JSON Pointers are errors; a string is not treated as a character
-array, and bytes are not treated as integer sequences. Text line/character ranges, byte ranges,
-and record/table slices are separate future design work, not JSON Pointer syntax supported by
-this release. Existing file/count/total-byte limits continue to apply to every include tag.
+```yaml
+notes: !include-text {path: notes.txt, lines: {start: 2, end: 4}}
+legacy: !include-text {path: legacy.txt, encoding: latin-1}
+tail: !include-text {path: notes.txt, lines: {start: 5}}
+```
+
+`encoding` must be a string naming a supported Python text codec. Decoding is strict: malformed
+input is an error, not replacement text. The complete source is decoded before line selection,
+so an encoding error in an unselected line still fails. No newline conversion is applied.
+
+`lines.start` defaults to 1; `lines.end` is optional. Both are positive integers, one-based and
+inclusive. An end before the start is an error. CR, LF, and CRLF delimit physical lines;
+original terminators are retained. A trailing terminator does not create another empty line.
+The end is clipped at EOF, and a start beyond EOF gives an empty string. Omitting `lines`
+returns the whole decoded text. `json_pointer` and `json_path` are not text-include options.
+
+### Raw byte ranges
+
+`!include-raw` returns exact bytes. Its mapping form can select a byte range:
+
+```yaml
+header: !include-raw {path: payload.bin, offset: 0, length: 16}
+remainder: !include-raw {path: payload.bin, offset: 16}
+```
+
+`offset` is zero-based and defaults to 0. `length` is optional; without it, all bytes from the
+offset to EOF are returned. Both are nonnegative integers. Zero length or an offset beyond EOF
+gives empty bytes; the end is clipped at EOF. No decoding occurs. JSON selectors, encodings,
+and line ranges are not raw-include options.
+
+Text and raw ranges are selections after a complete bounded read, not partial-file IO. The
+entire source counts toward file and total-byte limits, even for an empty selected range.
+All resolver/root/count/depth policies and stream cleanup still apply.
 
 ## JSON Lines and NDJSON records
 

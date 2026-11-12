@@ -80,12 +80,12 @@ For filters, wildcards, slices, and multiple results, install `yaml-compose[json
 an explicit value selector:
 
 ```yaml
-enabled: !jsonpath [!include catalog.json, '$.items[?@.enabled == true]']
+enabled: !include {path: catalog.json, json_path: '$.items[?@.enabled == true]'}
 ```
 
-`!jsonpath [source, query]` always returns a list, even with zero or one match. Its query is
-separate from the filename and from URI-fragment JSON Pointer selection. Sources can also
-use `!include-all`, `!include-table`, or inline JSON-compatible YAML values. See
+`json_path` always returns a list, even with zero or one match. It is also available on
+`!include-all` and `!include-table`. Use `!jsonpath [source, query]` to query an inline value
+or a separately composed source. JSONPath and JSON Pointer are explicit, separate options. See
 [JSONPath selection](docs/jsonpath.md) for strict syntax, supported values, resource limits,
 optional-dependency setup, and subprocess requirements.
 
@@ -99,7 +99,7 @@ the composition layer, so included mappings can participate in the same merge op
 | `!include`       | YAML, JSON-family, TOML, INI, dotenv | Native Python value                 |
 | `!include-all`   | YAML document stream                 | List of documents, even zero or one |
 | `!include-table` | CSV or registered table adapter      | Rows of strings; first row included |
-| `!include-text`  | UTF-8 text                           | Exact decoded string                |
+| `!include-text`  | Text (UTF-8 by default)              | Exact decoded string                |
 | `!include-raw`   | Any file                             | Exact bytes                         |
 
 JSON5 is optional; install `yaml-compose[json5]` to use it. JSON Lines and NDJSON produce
@@ -109,11 +109,21 @@ cell values. Custom table adapters, such as a caller-supplied TSV parser, can al
 `date`, `time`, or `datetime` objects.
 Raw includes return bytes, which need explicit conversion before JSON serialization.
 
-Select part of a structured include with a URI-fragment JSON Pointer, for example
-`array: !include "hardware.yaml#/arrays/kbr"` or `<<<: !include "defaults.yaml#/service"`.
-Selection happens after parsing the complete source and before parent composition. It also
-supports record indexes and CSV row/cell indexes. Missing paths are marked include errors;
-resource limits still cover the complete source. See [fragment selection](docs/formats.md#select-part-of-an-include).
+Every tag also accepts an options mapping with a literal `path`. Select part of a structured
+include with plain JSON Pointer, for example:
+
+```yaml
+array: !include {path: hardware.yaml, json_pointer: /arrays/kbr}
+<<<: !include {path: defaults.yaml, json_pointer: /service}
+notes: !include-text {path: notes.txt, lines: {start: 2, end: 4}}
+header: !include-raw {path: payload.bin, offset: 0, length: 16}
+```
+
+Scalar paths stay literal, including `#` and `%`: `!include "config#blue.yaml"` names that file.
+Paths and selectors are never split or percent-decoded. JSON Pointer uses `~0` and `~1` escapes,
+not a leading `#`. Selection happens after complete reading/parsing and before composition;
+missing pointer paths are errors, and resource limits still cover the whole source. See
+[include options and selection](docs/formats.md#include-options-and-selection) for every tag's fields.
 
 For parser details and the format adapter API, see the [included formats guide](docs/formats.md).
 The [worked format examples](docs/examples.md#include-json-and-toml-sources) cover JSON,
@@ -122,7 +132,7 @@ for string, text, and raw includes.
 
 Use `!include-all "bundle.yaml"` to include every document in a YAML stream as a list.
 The result is always a document list, even for an empty source or a single document.
-`!include-all "bundle.yaml#/1/settings"` selects `settings` from the second document.
+`!include-all {path: bundle.yaml, json_pointer: /1/settings}` selects `settings` from the second document.
 Ordinary `!include` keeps its single-document behavior. See [YAML streams](docs/formats.md#yaml-document-streams).
 
 ## Loading and include boundaries
