@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add object-only `!include-many` for ordered literal paths and explicit filesystem globs,
+  preserving one result per file and applying document mode and selection independently to
+  each completed source. Keep duplicates across entries, reject no-match globs, confine
+  traversal to allowed roots, and share a configurable `max_glob_steps` expansion budget.
 - Add options mappings across all include tags while preserving every scalar path literally,
   including filenames containing `#` and `%`. Structured includes support mutually exclusive
   plain `json_pointer` and `json_path` fields, separate from the source path.

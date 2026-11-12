@@ -47,6 +47,9 @@ class IncludeLimits:
         max_file_bytes: Maximum encoded bytes read from one included file, or ``None``.
         max_total_include_bytes: Maximum encoded bytes read across all includes,
             or ``None``.
+        max_glob_steps: Maximum source-setup and directory/pattern states plus
+            directory entries examined across all globs, or ``None``. This
+            setting is available through the profile, not a keyword override.
 
     """
 
@@ -54,6 +57,7 @@ class IncludeLimits:
     max_include_files: int | None = _DEFAULT_MAX_INCLUDE_FILES
     max_file_bytes: int | None = _DEFAULT_MAX_FILE_BYTES
     max_total_include_bytes: int | None = _DEFAULT_MAX_TOTAL_INCLUDE_BYTES
+    max_glob_steps: int | None = 100_000
 
     def __post_init__(self) -> None:
         """Reject invalid bounds before a limits profile can be used."""
@@ -62,6 +66,7 @@ class IncludeLimits:
             self.max_include_files,
             self.max_file_bytes,
             self.max_total_include_bytes,
+            self.max_glob_steps,
         )
         if any(value is not None and (type(value) is not int or value < 0) for value in values):
             raise ValueError("include limits must be non-negative integers or None")
@@ -126,4 +131,5 @@ def resolve_include_limits(
         max_include_files=_resolve_limit(max_include_files, defaults.max_include_files),
         max_file_bytes=_resolve_limit(max_file_bytes, defaults.max_file_bytes),
         max_total_include_bytes=_resolve_limit(max_total_include_bytes, defaults.max_total_include_bytes),
+        max_glob_steps=defaults.max_glob_steps,
     )

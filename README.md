@@ -109,7 +109,7 @@ cell values. Custom table adapters, such as a caller-supplied TSV parser, can al
 `date`, `time`, or `datetime` objects.
 Raw includes return bytes, which need explicit conversion before JSON serialization.
 
-Every tag also accepts an options mapping with a literal `path`. Select part of a structured
+Every single-source tag also accepts an options mapping with a literal `path`. Select part of a structured
 include with plain JSON Pointer, for example:
 
 ```yaml
@@ -134,6 +134,24 @@ Use `!include-all "bundle.yaml"` to include every document in a YAML stream as a
 The result is always a document list, even for an empty source or a single document.
 `!include-all {path: bundle.yaml, json_pointer: /1/settings}` selects `settings` from the second document.
 Ordinary `!include` keeps its single-document behavior. See [YAML streams](docs/formats.md#yaml-document-streams).
+
+## Collect several files
+
+Use object-only `!include-many` for an ordered list of structured sources. Patterns expand
+only in explicit `glob` entries; ordinary strings and `path` entries remain literal:
+
+```yaml
+configs: !include-many
+  paths: [base.yaml, {path: 'special#blue.yaml'}, {glob: 'profiles/*.yaml'}]
+  json_pointer: /service
+```
+
+The result has one item per file, without flattening arrays. Each glob is sorted, duplicate
+entries are retained, and a no-match glob is an error. Selectors apply per file. Optional
+`documents: all` makes each file a YAML document list before selection. Glob traversal has
+its own shared limit and does not bypass allowed roots. See
+[collecting files](docs/formats.md#collect-several-structured-files) for search order, symlinks,
+result shapes, and `IncludeLimits.max_glob_steps`.
 
 ## Loading and include boundaries
 

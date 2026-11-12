@@ -13,6 +13,9 @@ COMPOSE_LOADER_TAG = "YamlCompose"
 INCLUDE_TAG = "!include"
 """Tag that loads a structured YAML or registered-format document."""
 
+INCLUDE_MANY_TAG = "!include-many"
+"""Tag that collects one result per explicit source or filesystem glob match."""
+
 INCLUDE_ALL_TAG = "!include-all"
 """Tag that loads a YAML stream as a list of all its documents."""
 
@@ -51,6 +54,7 @@ __all__ = (
     "DEEP_MERGE_KEY",
     "DELETE_TAG",
     "INCLUDE_ALL_TAG",
+    "INCLUDE_MANY_TAG",
     "INCLUDE_RAW_TAG",
     "INCLUDE_TABLE_TAG",
     "INCLUDE_TAG",

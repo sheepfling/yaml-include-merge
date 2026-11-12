@@ -5,12 +5,12 @@ from __future__ import annotations
 import codecs
 from dataclasses import dataclass
 
-from yaml import MappingNode, Node, ScalarNode
+from yaml import MappingNode, Node, ScalarNode, SequenceNode
 from yaml.constructor import SafeConstructor
 from yaml.resolver import BaseResolver
 
 from ._selectors import validate_json_pointer
-from .tags import INCLUDE_RAW_TAG, INCLUDE_TEXT_TAG
+from .tags import INCLUDE_MANY_TAG, INCLUDE_RAW_TAG, INCLUDE_TEXT_TAG
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,3 +114,57 @@ def parse_include_spec(node: Node, *, tag: str) -> IncludeSpec:
         validate_json_pointer(pointer)
     query = _string(options["json_path"], name="json_path") if "json_path" in options else None
     return IncludeSpec(path, json_pointer=pointer, json_path=query)
+
+
+@dataclass(frozen=True, slots=True)
+class ManySource:
+    """One inert literal path or explicit filesystem pattern and its source mark."""
+
+    path: str
+    glob: bool
+    node: Node
+
+
+@dataclass(frozen=True, slots=True)
+class ManyIncludeSpec:
+    """Shared selection options applied once to each completed source result."""
+
+    sources: tuple[ManySource, ...]
+    all_documents: bool = False
+    json_pointer: str | None = None
+    json_path: str | None = None
+
+
+def parse_many_include_spec(node: Node) -> ManyIncludeSpec:
+    """Validate an object-only source collection without constructing custom tags."""
+    options = _mapping(
+        node,
+        name=INCLUDE_MANY_TAG,
+        allowed=frozenset(("paths", "documents", "json_pointer", "json_path")),
+        tagged=True,
+    )
+    if "paths" not in options:
+        raise ValueError(f"{INCLUDE_MANY_TAG} requires a paths option")
+    paths = options["paths"]
+    if not isinstance(paths, SequenceNode) or paths.tag != BaseResolver.DEFAULT_SEQUENCE_TAG:
+        raise ValueError("paths must be a sequence of literal paths or explicit glob mappings")
+    sources: list[ManySource] = []
+    for entry in paths.value:
+        if isinstance(entry, MappingNode):
+            source = _mapping(entry, name="source", allowed=frozenset(("path", "glob")))
+            if len(source) != 1:
+                raise ValueError("each source mapping must contain exactly one path or glob")
+            key = next(iter(source))
+            sources.append(ManySource(_string(source[key], name=key), key == "glob", source[key]))
+        else:
+            sources.append(ManySource(_string(entry, name="path"), False, entry))
+    documents = _string(options["documents"], name="documents") if "documents" in options else "single"
+    if documents not in ("single", "all"):
+        raise ValueError("documents must be 'single' or 'all'")
+    if "json_pointer" in options and "json_path" in options:
+        raise ValueError("json_pointer and json_path are mutually exclusive")
+    pointer = _string(options["json_pointer"], name="json_pointer", empty=True) if "json_pointer" in options else None
+    if pointer is not None:
+        validate_json_pointer(pointer)
+    query = _string(options["json_path"], name="json_path") if "json_path" in options else None
+    return ManyIncludeSpec(tuple(sources), documents == "all", pointer, query)

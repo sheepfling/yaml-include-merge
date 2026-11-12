@@ -86,8 +86,8 @@ IncludeSource = FileSource | MemorySource
 class IncludeRequest:
     """Context passed to an ``IncludeResolver`` for one ``!include`` read.
 
-    ``name`` is the local include path with any selector fragment removed.
-    Fragment decoding and selection belong to the loader, not the resolver.
+    ``name`` is the literal local include path. Selectors are separate mapping
+    options and are never embedded in or decoded from this path.
     ``including`` is the current source
     or ``None`` for a source-free stream. ``search_paths`` control lookup order;
     ``allowed_roots`` are the authorization boundary. The loader has already

@@ -23,6 +23,7 @@ from yaml.error import MarkedYAMLError
 from yaml.resolver import BaseResolver
 
 from ._compat import _TypeVar
+from ._include_many import construct_include_many
 from ._include_specs import IncludeSpec, parse_include_spec
 from ._jsonpath import DEFAULT_JSONPATH_LIMITS, JsonPathLimits, select_jsonpath
 from ._overlays import DELETE as _DELETE
@@ -64,6 +65,7 @@ from .tags import (
     DEEP_MERGE_KEY,
     DELETE_TAG,
     INCLUDE_ALL_TAG,
+    INCLUDE_MANY_TAG,
     INCLUDE_RAW_TAG,
     INCLUDE_TABLE_TAG,
     INCLUDE_TAG,
@@ -225,6 +227,8 @@ class _IncludeBudget:
     max_include_files: int | None
     max_file_bytes: int | None
     max_total_include_bytes: int | None
+    max_glob_steps: int | None = 100_000
+    glob_steps: int = 0
     include_files: int = 0
     include_bytes: int = 0
     current_depth: int = 0
@@ -667,13 +671,17 @@ class IncludeLoader(SafeLoader):
         node: Node,
         *,
         tag: str,
+        provided_spec: IncludeSpec | None = None,
+        resolved_override: ResolvedInclude | None = None,
     ) -> tuple[ResolvedInclude, IncludeSource, str, IncludeRouteFrame, IncludeSpec]:
         """Resolve and validate one include source under the current loader context."""
         frame = self._route_frame(node, tag=tag)
         route = (*self.include_route, frame)
         try:
             try:
-                if isinstance(node, ScalarNode):
+                if provided_spec is not None:
+                    spec = provided_spec
+                elif isinstance(node, ScalarNode):
                     name = self.construct_scalar(node)
                     if not name:
                         raise ValueError(f"{tag} expects a non-empty path")
@@ -687,7 +695,7 @@ class IncludeLoader(SafeLoader):
             if not self.allowed_roots:
                 _include_error(node, f"{tag} requires at least one allowed root", tag=tag)
             try:
-                resolved = self.include_resolver.resolve(
+                resolved = resolved_override or self.include_resolver.resolve(
                     IncludeRequest(
                         name=name,
                         including=self.source,
@@ -836,13 +844,27 @@ class IncludeLoader(SafeLoader):
             _attach_include_route(exc, route)
             raise
 
-    def _include(self, node: Node, *, table: bool = False, all_documents: bool = False) -> object:
+    def _include(
+        self,
+        node: Node,
+        *,
+        table: bool = False,
+        all_documents: bool = False,
+        tag_override: str | None = None,
+        provided_spec: IncludeSpec | None = None,
+        resolved_override: ResolvedInclude | None = None,
+    ) -> object:
         """Load a structured value, all YAML documents, or an explicit table."""
-        tag = INCLUDE_ALL_TAG if all_documents else INCLUDE_TABLE_TAG if table else INCLUDE_TAG
+        tag = tag_override or (INCLUDE_ALL_TAG if all_documents else INCLUDE_TABLE_TAG if table else INCLUDE_TAG)
         frame = self._route_frame(node, tag=tag)
         route = (*self.include_route, frame)
         try:
-            resolved, include_source, source_label, frame, spec = self._resolve_include_source(node, tag=tag)
+            resolved, include_source, source_label, frame, spec = self._resolve_include_source(
+                node,
+                tag=tag,
+                provided_spec=provided_spec,
+                resolved_override=resolved_override,
+            )
             route = (*self.include_route, frame)
             try:
                 selection = self.format_registry.select_format(include_source, format_id=resolved.format_id)
@@ -1158,42 +1180,19 @@ class IncludeLoader(SafeLoader):
         )
 
 
-IncludeLoader.add_constructor(
-    INCLUDE_TAG,
-    IncludeLoader._construct_include,  # pyright: ignore[reportPrivateUsage]
-)
-IncludeLoader.add_constructor(
-    INCLUDE_ALL_TAG,
-    IncludeLoader._construct_include_all,  # pyright: ignore[reportPrivateUsage]
-)
-IncludeLoader.add_constructor(
-    INCLUDE_TABLE_TAG,
-    IncludeLoader._construct_include_table,  # pyright: ignore[reportPrivateUsage]
-)
-IncludeLoader.add_constructor(
-    INCLUDE_RAW_TAG,
-    IncludeLoader._construct_include_raw,  # pyright: ignore[reportPrivateUsage]
-)
-IncludeLoader.add_constructor(
-    INCLUDE_TEXT_TAG,
-    IncludeLoader._construct_include_text,  # pyright: ignore[reportPrivateUsage]
-)
-IncludeLoader.add_constructor(
-    JSONPATH_TAG,
-    IncludeLoader._construct_jsonpath,  # pyright: ignore[reportPrivateUsage]
-)
-IncludeLoader.add_constructor(
-    DELETE_TAG,
-    IncludeLoader._construct_delete,  # pyright: ignore[reportPrivateUsage]
-)
-IncludeLoader.add_constructor(
-    SPREAD_TAG,
-    IncludeLoader._construct_spread,  # pyright: ignore[reportPrivateUsage]
-)
-IncludeLoader.add_constructor(
-    REPLACE_TAG,
-    IncludeLoader._construct_replace,  # pyright: ignore[reportPrivateUsage]
-)
+for _tag, _constructor in (
+    (INCLUDE_TAG, IncludeLoader._construct_include),  # pyright: ignore[reportPrivateUsage]
+    (INCLUDE_ALL_TAG, IncludeLoader._construct_include_all),  # pyright: ignore[reportPrivateUsage]
+    (INCLUDE_MANY_TAG, construct_include_many),
+    (INCLUDE_TABLE_TAG, IncludeLoader._construct_include_table),  # pyright: ignore[reportPrivateUsage]
+    (INCLUDE_RAW_TAG, IncludeLoader._construct_include_raw),  # pyright: ignore[reportPrivateUsage]
+    (INCLUDE_TEXT_TAG, IncludeLoader._construct_include_text),  # pyright: ignore[reportPrivateUsage]
+    (JSONPATH_TAG, IncludeLoader._construct_jsonpath),  # pyright: ignore[reportPrivateUsage]
+    (DELETE_TAG, IncludeLoader._construct_delete),  # pyright: ignore[reportPrivateUsage]
+    (SPREAD_TAG, IncludeLoader._construct_spread),  # pyright: ignore[reportPrivateUsage]
+    (REPLACE_TAG, IncludeLoader._construct_replace),  # pyright: ignore[reportPrivateUsage]
+):
+    IncludeLoader.add_constructor(_tag, _constructor)
 
 
 def _canonical_source(source: IncludeSource) -> IncludeSource:
@@ -1458,6 +1457,7 @@ def load_yaml_dispatch(
             max_include_files=limits.max_include_files,
             max_file_bytes=limits.max_file_bytes,
             max_total_include_bytes=limits.max_total_include_bytes,
+            max_glob_steps=limits.max_glob_steps,
             current_depth=max(0, seeded_depth),
         )
     else:

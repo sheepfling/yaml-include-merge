@@ -34,7 +34,7 @@ standard JSON parser and deeply nested input may reach Python's recursion limit.
 
 ## Include options and selection
 
-Every include tag accepts either a scalar literal path or an options mapping with a required
+Every single-source include tag accepts either a scalar literal path or an options mapping with a required
 `path` string. The scalar form is unchanged: `!include "config#blue%20.yaml"` opens that exact
 local name. It does not split `#`, percent-decode names, or interpret URI references. The
 mapping form keeps the path and any selector separate:
@@ -208,6 +208,122 @@ and line ranges are not raw-include options.
 Text and raw ranges are selections after a complete bounded read, not partial-file IO. The
 entire source counts toward file and total-byte limits, even for an empty selected range.
 All resolver/root/count/depth policies and stream cleanup still apply.
+
+## Collect several structured files
+
+`!include-many` is an object-only operation for explicitly ordered paths and filesystem globs:
+
+```yaml
+%LOADER YamlCompose
+---
+configs: !include-many
+  paths:
+    - base.yaml
+    - {path: 'special#;%20.yaml'}
+    - {glob: 'profiles/*.yaml'}
+  json_pointer: /service
+```
+
+Unlike the single-source include tags, it requires a mapping with `paths`, a sequence of
+entries. Each entry is either a literal path string, `{path: literal_path}`, or an explicit
+`{glob: pattern}`. A string containing `*`, `?`, `[`, `#`, or `%` stays a literal path; only a
+`glob` entry expands patterns. Names are never interpreted as URI references or percent-decoded.
+There is no scalar `!include-many` shorthand and no implicit comma/semicolon-delimited path list.
+Empty `paths: []` returns `[]`.
+
+Optional top-level fields are `documents: single` (the default) or `documents: all`, and either
+`json_pointer` or `json_path`. Entries do not accept their own selectors or include-option
+objects. Unknown/duplicate fields, non-string paths, invalid document modes, YAML merge
+expressions, and tagged expressions in options are errors before source resolution.
+
+### Result shape and selection
+
+The output has one item per resolved file, in source order. `documents: single` loads each
+file as ordinary `!include`; `documents: all` loads each file as `!include-all`, which requires
+YAML. CSV tables and raw/text-specific reads are not added to ordinary structured include
+semantics by using this tag. A source array stays one nested array, a YAML stream stays one
+nested document list, and a JSONPath selection stays one nested nodelist. Nothing is flattened.
+
+Selection is applied independently to each **completed file result**, not to the outer result
+list and not separately to each document in `documents: all` mode:
+
+```yaml
+second_document_settings: !include-many
+  paths: [one.yaml, two.yaml]
+  documents: all
+  json_pointer: /1/settings
+
+all_names: !include-many
+  paths: [{glob: 'records/*.json'}]
+  json_path: '$.items[*].name'
+```
+
+For the first example, `/1/settings` selects from the document list for each file. If either
+file lacks that path, the whole operation fails. JSONPath's zero/one/many matches remain a
+list for each file, including `[]` for a file with no matches. Both selectors retain their
+single-source validation rules and JSONPath's optional dependency and resource controls.
+
+A failure in any source fails the operation; no partial list escapes. Each source's full
+content is parsed before selection, including later YAML documents and nested includes.
+Nested paths resolve relative to that source's containing directory as usual. The aggregate
+list cannot be a `<<` or `<<<` mapping source. Use `!spread` if you explicitly want to insert
+its per-file results into another sequence; this still does not flatten an individual result.
+
+### Explicit glob semantics
+
+Globs use path-segment patterns: `*`, `?`, and bracket character classes. A complete `**`
+segment matches zero or more directories. Hidden names are included when the pattern matches
+them. Brace expansion, tilde expansion, and shell execution are not supported. An exact
+pattern such as `{glob: config.yaml}` is valid and matches zero or one file.
+
+Path entries retain their listed order. Each glob's matches are sorted by normalized path
+spelling in case-sensitive Unicode lexical order. Pattern matching itself follows native
+platform case normalization. Each spelling appears once within a single glob, including a
+recursive pattern with multiple ways to reach it. Repeating entries or using overlapping
+globs retains duplicate reads and duplicate results. Distinct symlink spellings are not
+collapsed merely because they resolve to the same file. A glob with no matching files is
+an error rather than an empty contribution.
+
+Bare patterns follow `include_search`. Each uses the first search location that produces
+matching files; results from different locations are not combined. Explicit `./` or `../`
+patterns require a containing filesystem source and do not fall back to search paths.
+Absolute patterns obey `allow_absolute_includes`. There is no working-directory fallback.
+As with ordinary paths, host-native separators apply; Windows drive/UNC spellings do not
+turn into Windows filesystem access when running on POSIX.
+
+Globbing is supported only with the built-in local filesystem resolver. Literal entries work
+with custom resolvers, but a glob does not silently fall back from a custom resolver to the
+filesystem. Globs do not fetch URLs or add any network-resolution capability.
+
+### Glob confinement and budgets
+
+The fixed non-wildcard directory prefix is canonicalized and must lie inside an allowed root
+before scanning starts. A broad pattern cannot start outside allowed roots and scan toward
+an allowed descendant. `..` in a fixed prefix is permitted only when the resulting prefix
+is confined; `..` after the first wildcard segment is rejected.
+
+Wildcard directory traversal does not follow directory symlinks. An explicitly named fixed
+symlink prefix may be used only when its canonical target is inside the allowed roots. A
+matched symlink file outside those roots is an error. Directory results are not included as
+file values. These rules avoid treating pattern expansion as a way around ordinary include
+confinement; they do not make concurrent filesystem mutations race-free.
+
+Every selected file, including duplicate reads, consumes the normal include-count and byte
+budgets. Nested includes share those budgets and retain depth/cycle checks. In addition,
+`IncludeLimits.max_glob_steps` defaults to `100_000` and bounds location setup, directory/pattern states, and
+directory entries examined across all globs in a top-level load, including nested expansions.
+An empty directory still consumes traversal work. Set the profile field to `0` to forbid glob
+work or `None` to leave traversal unbounded. Literal entries do not consume glob steps.
+This field is configured through `include_limits`, not a new per-call `max_glob_steps` argument:
+
+```python
+from yaml_compose import IncludeLimits, YamlConfigLoader
+
+loader = YamlConfigLoader(include_limits=IncludeLimits(max_glob_steps=10_000))
+```
+
+The traversal budget bounds expansion work, not elapsed time, file mutation, or total Python
+memory. Resource-limit failures are errors and never return a truncated list of matches.
 
 ## JSON Lines and NDJSON records
 
