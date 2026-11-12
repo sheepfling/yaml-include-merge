@@ -1,7 +1,7 @@
 # Included document formats
 
 `yaml-compose` uses YAML as its composition language. An including YAML document owns the
-`!include`, `!include-all`, `!include-table`, `!include-text`, `!include-raw`, merge, `!delete`, `!replace`,
+`!include`, `!include-table`, `!include-text`, `!include-raw`, merge, `!delete`, `!replace`,
 `!jsonpath`, and `!spread` operations. An included non-YAML document is parsed into its native Python value;
 the package does not interpret YAML tags inside it.
 
@@ -54,8 +54,7 @@ The supported fields are deliberately specific to each tag:
 
 | Tag              | Fields beyond required `path`               |
 | ---------------- | ------------------------------------------- |
-| `!include`       | `json_pointer` or `json_path`               |
-| `!include-all`   | `json_pointer` or `json_path`               |
+| `!include`       | `documents`, `json_pointer` or `json_path`  |
 | `!include-table` | `json_pointer` or `json_path`               |
 | `!include-text`  | `encoding`, `lines: {start: ..., end: ...}` |
 | `!include-raw`   | `offset`, `length`                          |
@@ -121,15 +120,16 @@ See [JSONPath selection](jsonpath.md) for filters, slices, functions, and limits
 
 ### YAML document streams
 
-Use `!include-all` explicitly to read a YAML stream as a list of all its documents:
+Use the object-only `documents: all` option on `!include` to read a YAML stream as a list of
+all its documents:
 
 ```yaml
 %LOADER YamlCompose
 ---
-documents: !include-all "bundle.yaml"
-settings: !include-all {path: bundle.yaml, json_pointer: /1/settings}
-recent: !include-all {path: bundle.yaml, json_path: '$[-3:]'}
-steps: [prepare, !spread [!include-all "steps.yaml"], finish]
+documents: !include {path: bundle.yaml, documents: all}
+settings: !include {documents: all, path: bundle.yaml, json_pointer: /1/settings}
+recent: !include {documents: all, path: bundle.yaml, json_path: '$[-3:]'}
+steps: [prepare, !spread [!include {path: steps.yaml, documents: all}], finish]
 ```
 
 Without a selector, the result is always a list. An empty or comment-only stream gives `[]`;
@@ -164,10 +164,11 @@ or selector. There is no separate document-count limit. As with ordinary YAML, b
 not bound all parser CPU or expanded object memory.
 
 The resolver's selected format must be YAML. Registered non-YAML formats produce an explicit
-error for `!include-all`; unknown suffixes retain the YAML fallback. Resolver-provided
+error with `documents: all`; unknown suffixes retain the YAML fallback. Resolver-provided
 `format_id="yaml"` works. JSONL and NDJSON already return record lists through `!include`.
-Ordinary `!include` remains single-document and rejects multiple documents, even with a selector.
-Its `/0` selects a sequence element, not a stream document. This document-list model is explicit
+Scalar `!include` and mappings without `documents: all` remain single-document and reject multiple
+documents, even with a selector. `documents: single` explicitly requests the same default behavior.
+In single-document mode, `/0` selects a sequence element, not a stream document. This document-list model is explicit
 yaml-compose behavior, not the URI-fragment syntax defined by RFC 9512. Named-anchor fragments
 such as `#*name` are not supported.
 
@@ -245,7 +246,7 @@ expressions, and tagged expressions in options are errors before source resoluti
 ### Result shape and selection
 
 The output has one item per resolved file, in source order. `documents: single` loads each
-file as ordinary `!include`; `documents: all` loads each file as `!include-all`, which requires
+file as ordinary `!include`; `documents: all` loads each file as `!include {path: ..., documents: all}`, which requires
 YAML. CSV tables and raw/text-specific reads are not added to ordinary structured include
 semantics by using this tag. A source array stays one nested array, a YAML stream stays one
 nested document list, and a JSONPath selection stays one nested nodelist. Nothing is flattened.

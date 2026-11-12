@@ -23,6 +23,35 @@ Parsing and composition are separate concerns. PyYAML still reads scalars and co
 Python values. Its default scalar rules remain in effect, including boolean values such
 as `yes` and `on`; this package does not switch the parser to the YAML 1.2 core schema.
 
+### Python mapping-key equality
+
+Loaded mappings are ordinary Python dictionaries, not a type-tagged YAML key store.
+Python considers keys such as `True`, `1`, and `1.0` equal; `False`, `0`, and `0.0` likewise
+collide. Explicit keys that compare equal within one YAML mapping are rejected as duplicates.
+Across separate merge sources, however, normal override precedence applies to those equal
+keys rather than retaining them as distinct typed keys.
+
+For example, `base.yaml` contains:
+
+```yaml
+true: original
+```
+
+An including configuration contains:
+
+```yaml
+%LOADER YamlCompose
+---
+<<<: !include base.yaml
+1: replacement
+```
+
+The Python result is `{True: "replacement"}`, not two entries. The local value wins and the
+existing boolean key remains in the dictionary. This is existing composition behavior, not
+a JSON Pointer or document-stream conversion. Quote identifiers when their spelling must
+distinguish them: string keys `"true"` and `"1"` remain separate. Distinct scalar value types
+are still preserved; this limitation concerns mapping-key identity.
+
 ## Preserve the merge-key precedence
 
 PyYAML supports the YAML 1.1-era [merge-key working draft](https://yaml.org/type/merge.html).
@@ -100,6 +129,12 @@ Composition is enabled by the package header `%LOADER YamlCompose` or by explici
 selecting the composition API. Ordinary YAML keeps the ordinary loader path.
 `SafeLoader` is the default; applications can select another trusted PyYAML loader.
 The result is a Python value, without comments, source formatting, or per-key provenance.
+
+The default is PyYAML's Python `yaml.SafeLoader`, even when the optional LibYAML C extension
+is installed. The extension is not required: ordinary loading, includes, composition, and
+document streams also work without it. Caller-selected loaders must derive from the supported
+Python loader classes; `yaml.CSafeLoader` and the other C loader classes are not supported
+substitutes in this API.
 
 `!include` dispatches registered document adapters from the resolved source's suffix.
 Built-ins cover JSON-family formats, TOML, INI, and dotenv; unknown suffixes keep the

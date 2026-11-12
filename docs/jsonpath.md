@@ -26,13 +26,13 @@ installation command. Ordinary includes and JSON Pointers do not require this ex
 ---
 enabled: !include {path: catalog.json, json_path: '$.items[?@.enabled == true]'}
 names: !include {path: catalog.json, json_path: '$.items[*].name'}
-recent: !include-all {path: events.yaml, json_path: '$[-3:]'}
+recent: !include {documents: all, path: events.yaml, json_path: '$[-3:]'}
 first_cells: !include-table {path: people.csv, json_path: '$[*][0]'}
 inline: !jsonpath [{items: [one, two]}, '$.items[0]']
 steps: [start, !spread [!jsonpath [!include workflow.json, '$.steps[*]']], finish]
 ```
 
-`json_path` is supported by `!include`, `!include-all`, `!include-table`, and `!include-many`;
+`json_path` is supported by `!include`, `!include-table`, and `!include-many`;
 it cannot be combined with `json_pointer` in one include mapping. `!include-many` applies the
 query separately to each completed file value and retains one nested nodelist per file.
 `!include-text` and `!include-raw` use
@@ -50,8 +50,8 @@ duplicates. A matched array is one value and stays nested unless the query selec
 The engine's RFC ordering applies; do not depend on object-member iteration order.
 
 `$` selects the entire source as one result, including a string, number, boolean, or null.
-A string is a scalar, not JSON text to parse again. `!include-all` supplies its explicit list
-of documents, so `$[1]` selects the second document. Queries do not change single-document
+A string is a scalar, not JSON text to parse again. `!include` with `documents: all` supplies
+its explicit list of documents, so `$[1]` selects the second document. Queries do not change single-document
 `!include` behavior or invent a multi-document stream interpretation.
 
 That document-list root is retained for zero, one, or many YAML documents. `$[1:3]` selects

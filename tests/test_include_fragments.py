@@ -325,7 +325,6 @@ def test_custom_adapter_values_use_the_same_pointer_semantics() -> None:
     ("tag", "name", "content", "expected"),
     [
         ("!include", "config#blue%20.yaml", "value: 2\n", {"value": 2}),
-        ("!include-all", "config#blue%20.yaml", "---\none\n---\ntwo\n", ["one", "two"]),
         ("!include-table", "table#blue%20.csv", "a,b\n", [["a", "b"]]),
         ("!include-text", "notes#blue%20.txt", "hello\n", "hello\n"),
         ("!include-raw", "data#blue%20.bin", "hello\n", b"hello\n"),

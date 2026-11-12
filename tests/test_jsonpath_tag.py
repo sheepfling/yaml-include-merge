@@ -50,7 +50,7 @@ def test_tag_constructs_source_before_selection(monkeypatch: pytest.MonkeyPatch)
     ("source", "files", "expected"),
     [
         ("!include {path: 'data.json', json_pointer: '/items'}", {"data.json": '{"items": [1, 2]}'}, [1, 2]),
-        ("!include-all data.yaml", {"data.yaml": "---\na: 1\n---\na: 2\n"}, [{"a": 1}, {"a": 2}]),
+        ("!include {documents: all, path: data.yaml}", {"data.yaml": "---\na: 1\n---\na: 2\n"}, [{"a": 1}, {"a": 2}]),
         ("!include-table data.csv", {"data.csv": "a,b\n1,2\n"}, [["a", "b"], ["1", "2"]]),
         ("!include-text data.txt", {"data.txt": "123"}, "123"),
     ],
@@ -170,7 +170,7 @@ def test_include_validation_happens_before_jsonpath(monkeypatch: pytest.MonkeyPa
     root = MemoryRoot("validation")
     with pytest.raises(yaml.YAMLError):
         load_yaml_compose(
-            StringIO("!jsonpath [!include-all data.yaml, '$[0]']"),
+            StringIO("!jsonpath [!include {documents: all, path: data.yaml}, '$[0]']"),
             allowed_roots=[root],
             include_resolver=MemoryIncludeResolver(root, {"data.yaml": "---\na: 1\n---\nbroken: ["}),
         )

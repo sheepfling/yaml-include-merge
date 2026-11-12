@@ -71,9 +71,13 @@ def construct_include_many(loader: IncludeLoader, node: Node) -> list[object]:
             for resolved in resolved_sources:
                 value = loader._include(  # pyright: ignore[reportPrivateUsage]
                     source.node,
-                    all_documents=spec.all_documents,
                     tag_override=INCLUDE_MANY_TAG,
-                    provided_spec=IncludeSpec(source.path, json_pointer=spec.json_pointer, json_path=spec.json_path),
+                    provided_spec=IncludeSpec(
+                        source.path,
+                        json_pointer=spec.json_pointer,
+                        json_path=spec.json_path,
+                        all_documents=spec.all_documents,
+                    ),
                     resolved_override=resolved,
                 )
                 results.append(value)

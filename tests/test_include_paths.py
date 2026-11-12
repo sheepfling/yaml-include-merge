@@ -29,10 +29,13 @@ from yaml_compose import (
 from yaml_compose._include_specs import parse_include_spec
 from yaml_compose.resolver import validate_include_name
 
-_TAGS = ("!include", "!include-all", "!include-table", "!include-text", "!include-raw")
+_TAGS = ("!include", "!include-table", "!include-text", "!include-raw")
+# This label identifies an object form, not a registered YAML tag.
+_STREAM_FORM = "!include documents: all"
+_FORMS = [(tag, mapping) for tag in _TAGS for mapping in (False, True)] + [(_STREAM_FORM, True)]
 _PAYLOADS: dict[str, tuple[str, bytes, object]] = {
     "!include": ("yaml", b"value: selected\n", {"value": "selected"}),
-    "!include-all": ("yaml", b"---\none\n---\ntwo\n", ["one", "two"]),
+    _STREAM_FORM: ("yaml", b"---\none\n---\ntwo\n", ["one", "two"]),
     "!include-table": ("csv", b"name,value\na,1\n", [["name", "value"], ["a", "1"]]),
     "!include-text": ("txt", b"one\r\ntwo\n", "one\r\ntwo\n"),
     "!include-raw": ("bin", b"\x00\xffone\n", b"\x00\xffone\n"),
@@ -59,11 +62,13 @@ def _quote(value: str, style: str) -> str:
 
 def _include(tag: str, path: str, *, mapping: bool, style: str = "double") -> str:
     quoted = _quote(path, style)
+    if tag == _STREAM_FORM:
+        assert mapping
+        return f"!include {{path: {quoted}, documents: all}}"
     return f"{tag} {{path: {quoted}}}" if mapping else f"{tag} {quoted}"
 
 
-@pytest.mark.parametrize("tag", _TAGS)
-@pytest.mark.parametrize("mapping", [False, True], ids=["scalar", "mapping"])
+@pytest.mark.parametrize(("tag", "mapping"), _FORMS)
 @pytest.mark.parametrize("style", ["single", "double"])
 @pytest.mark.parametrize("stem", _PORTABLE_NAMES)
 def test_native_literal_path_punctuation_and_yaml_quoting(
@@ -78,8 +83,7 @@ def test_native_literal_path_punctuation_and_yaml_quoting(
 
 
 @pytest.mark.skipif(os.name == "nt", reason="These are POSIX filenames, not Windows filename or ADS tests")
-@pytest.mark.parametrize("tag", _TAGS)
-@pytest.mark.parametrize("mapping", [False, True], ids=["scalar", "mapping"])
+@pytest.mark.parametrize(("tag", "mapping"), _FORMS)
 @pytest.mark.parametrize("stem", ['double"quote', r"back\slash", "colon:name", "question?star*pipe|", "<angle>"])
 def test_native_posix_filename_characters(tmp_path: Path, tag: str, mapping: bool, stem: str) -> None:
     suffix, content, expected = _PAYLOADS[tag]
@@ -91,8 +95,7 @@ def test_native_posix_filename_characters(tmp_path: Path, tag: str, mapping: boo
     assert load_yaml_file(main) == expected
 
 
-@pytest.mark.parametrize("tag", _TAGS)
-@pytest.mark.parametrize("mapping", [False, True], ids=["scalar", "mapping"])
+@pytest.mark.parametrize(("tag", "mapping"), _FORMS)
 def test_native_absolute_path_and_policy(tmp_path: Path, tag: str, mapping: bool) -> None:
     suffix, content, expected = _PAYLOADS[tag]
     source = tmp_path / f"absolute#; %23.{suffix}"
@@ -103,8 +106,7 @@ def test_native_absolute_path_and_policy(tmp_path: Path, tag: str, mapping: bool
         load_yaml_compose(StringIO(text), allowed_roots=[tmp_path], allow_absolute_includes=False)
 
 
-@pytest.mark.parametrize("tag", _TAGS)
-@pytest.mark.parametrize("mapping", [False, True], ids=["scalar", "mapping"])
+@pytest.mark.parametrize(("tag", "mapping"), _FORMS)
 @pytest.mark.parametrize("outer_mapping", [False, True], ids=["outer-scalar", "outer-mapping"])
 def test_nested_paths_resolve_beside_containing_file(
     tmp_path: Path, tag: str, mapping: bool, outer_mapping: bool
@@ -127,8 +129,7 @@ def test_nested_paths_resolve_beside_containing_file(
     assert load_yaml_file(main) == {"value": expected}
 
 
-@pytest.mark.parametrize("tag", _TAGS)
-@pytest.mark.parametrize("mapping", [False, True], ids=["scalar", "mapping"])
+@pytest.mark.parametrize(("tag", "mapping"), _FORMS)
 def test_resolver_receives_literal_name_and_controls_source_identity(tag: str, mapping: bool) -> None:
     suffix, content, expected = _PAYLOADS[tag]
     root = MemoryRoot("path-contract")
@@ -159,8 +160,7 @@ def test_resolver_receives_literal_name_and_controls_source_identity(tag: str, m
     assert len(streams) == 1 and streams[0].closed
 
 
-@pytest.mark.parametrize("tag", ["!include", "!include-all"])
-@pytest.mark.parametrize("mapping", [False, True], ids=["scalar", "mapping"])
+@pytest.mark.parametrize(("tag", "mapping"), [("!include", False), ("!include", True), (_STREAM_FORM, True)])
 def test_alias_spelling_does_not_change_canonical_cycle_identity(tag: str, mapping: bool) -> None:
     root = MemoryRoot("identity")
     source = MemorySource(root, PurePosixPath("canonical#;%.yaml"))
@@ -190,8 +190,7 @@ def test_alias_spelling_does_not_change_canonical_cycle_identity(tag: str, mappi
     assert route[-1].resolved_source == "memory:identity/canonical#;%.yaml"
 
 
-@pytest.mark.parametrize("tag", _TAGS)
-@pytest.mark.parametrize("mapping", [False, True], ids=["scalar", "mapping"])
+@pytest.mark.parametrize(("tag", "mapping"), _FORMS)
 @pytest.mark.parametrize("path", ["https://example.invalid/a#b", "file:///tmp/a.yaml", "foo:bar.yaml", "bad\x00name"])
 def test_invalid_path_policy_fails_before_resolver(tag: str, mapping: bool, path: str) -> None:
     root = MemoryRoot("rejected")
@@ -206,8 +205,7 @@ def test_invalid_path_policy_fails_before_resolver(tag: str, mapping: bool, path
         )
 
 
-@pytest.mark.parametrize("tag", _TAGS)
-@pytest.mark.parametrize("mapping", [False, True], ids=["scalar", "mapping"])
+@pytest.mark.parametrize(("tag", "mapping"), _FORMS)
 @pytest.mark.parametrize("style", ["single", "double"])
 @pytest.mark.parametrize(
     "path",
@@ -228,7 +226,7 @@ def test_option_parser_preserves_foreign_path_text_without_resolving(
     node = compose(_include(tag, path, mapping=mapping, style=style))
     assert node is not None
     if mapping:
-        assert parse_include_spec(node, tag=tag).path == path
+        assert parse_include_spec(node, tag="!include" if tag == _STREAM_FORM else tag).path == path
     else:
         assert isinstance(node, yaml.ScalarNode)
         assert node.value == path
@@ -262,8 +260,7 @@ def test_native_posix_lexical_policy() -> None:
         validate_include_name(r"C:\foreign\name.yaml", allow_absolute=True)
 
 
-@pytest.mark.parametrize("tag", _TAGS)
-@pytest.mark.parametrize("mapping", [False, True], ids=["scalar", "mapping"])
+@pytest.mark.parametrize(("tag", "mapping"), _FORMS)
 def test_selector_looking_path_remains_literal_even_if_prefix_file_exists(
     tmp_path: Path, tag: str, mapping: bool
 ) -> None:
@@ -279,8 +276,7 @@ def test_selector_looking_path_remains_literal_even_if_prefix_file_exists(
     assert load_yaml_file(main) == expected
 
 
-@pytest.mark.parametrize("tag", _TAGS)
-@pytest.mark.parametrize("mapping", [False, True], ids=["scalar", "mapping"])
+@pytest.mark.parametrize(("tag", "mapping"), _FORMS)
 def test_percent_name_is_not_decoded_when_decoded_name_also_exists(tmp_path: Path, tag: str, mapping: bool) -> None:
     suffix, content, expected = _PAYLOADS[tag]
     name = f"space%20name.{suffix}"
@@ -292,8 +288,7 @@ def test_percent_name_is_not_decoded_when_decoded_name_also_exists(tmp_path: Pat
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Native Windows backslash-separated paths only")
-@pytest.mark.parametrize("tag", _TAGS)
-@pytest.mark.parametrize("mapping", [False, True], ids=["scalar", "mapping"])
+@pytest.mark.parametrize(("tag", "mapping"), _FORMS)
 @pytest.mark.parametrize("style", ["single", "double"])
 def test_native_windows_backslash_relative_path(tmp_path: Path, tag: str, mapping: bool, style: str) -> None:
     suffix, content, expected = _PAYLOADS[tag]
@@ -308,8 +303,7 @@ def test_native_windows_backslash_relative_path(tmp_path: Path, tag: str, mappin
     assert load_yaml_file(main) == expected
 
 
-@pytest.mark.parametrize("tag", _TAGS)
-@pytest.mark.parametrize("mapping", [False, True], ids=["scalar", "mapping"])
+@pytest.mark.parametrize(("tag", "mapping"), _FORMS)
 def test_punctuation_does_not_bypass_parent_path_confinement(tmp_path: Path, tag: str, mapping: bool) -> None:
     suffix, content, _expected = _PAYLOADS[tag]
     outside = f"outside#;%20.{suffix}"

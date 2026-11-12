@@ -15,7 +15,7 @@
 - Add optional explicit JSONPath selection through `json_path` or `!jsonpath [source, query]`,
   with a strict RFC 9535 engine, always-list results, JSON-domain validation, configurable
   input/result bounds, and isolated subprocess deadlines.
-- Add explicit `!include-all` for YAML document streams, always returning a document list
+- Add explicit `documents: all` on structured `!include` objects for YAML document streams, returning a document list
   before optional selection. Keep ordinary `!include` single-document semantics, document-local
   anchors, complete-stream validation, and shared include budgets. Retain the outer document
   list for zero, one, or many documents so JSONPath can index and slice the whole stream.

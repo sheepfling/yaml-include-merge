@@ -7,7 +7,6 @@ import pytest
 import yaml
 
 from yaml_compose import (
-    INCLUDE_ALL_TAG,
     IncludeLimits,
     IncludeRequest,
     MemoryIncludeResolver,
@@ -24,9 +23,9 @@ from yaml_compose import (
 def load_stream_include(content: str, *, pointer: str | None = None, recursive: bool = True) -> object:
     root = MemoryRoot("stream")
     spec = (
-        "!include-all bundle.yaml"
+        "!include {documents: all, path: bundle.yaml}"
         if pointer is None
-        else f'!include-all {{path: bundle.yaml, json_pointer: "{pointer}"}}'
+        else f'!include {{documents: all, path: bundle.yaml, json_pointer: "{pointer}"}}'
     )
     return load_yaml_compose(
         StringIO(spec),
@@ -52,7 +51,6 @@ def load_stream_include(content: str, *, pointer: str | None = None, recursive: 
     ],
 )
 def test_all_documents_always_returns_list(content: str, expected: object, recursive: bool) -> None:
-    assert INCLUDE_ALL_TAG == "!include-all"
     assert load_stream_include(content, recursive=recursive) == expected
     assert load_stream_include(content, pointer="", recursive=recursive) == expected
 
@@ -83,7 +81,7 @@ def test_late_document_errors_are_not_hidden_by_pointer(last: str, recursive: bo
     with pytest.raises(yaml.YAMLError) as caught:
         load_stream_include("---\nselected: 1\n---\n" + last, pointer="/0", recursive=recursive)
     route = get_include_route(caught.value)
-    assert route[-1].tag == "!include-all"
+    assert route[-1].tag == "!include"
     assert route[-1].requested_path == "bundle.yaml"
     assert "bundle.yaml" in str(caught.value)
 
@@ -103,13 +101,15 @@ def test_nested_includes_and_overlays_finish_before_stream_selection() -> None:
         ),
     )
     assert loader.load_include(
-        StringIO('<<<: !include-all {path: "dir/bundle.yaml", json_pointer: "/1/settings"}\nlocal: true\n')
+        StringIO('<<<: !include {documents: all, path: "dir/bundle.yaml", json_pointer: "/1/settings"}\nlocal: true\n')
     ) == {
         "host": "localhost",
         "port": 8080,
         "local": True,
     }
-    assert loader.load_include(StringIO('docs: [before, !spread [!include-all "dir/bundle.yaml"], after]\n')) == {
+    assert loader.load_include(
+        StringIO('docs: [before, !spread [!include {documents: all, path: "dir/bundle.yaml"}], after]\n')
+    ) == {
         "docs": [
             "before",
             {"ignored": {"host": "localhost", "port": 80}},
@@ -118,8 +118,8 @@ def test_nested_includes_and_overlays_finish_before_stream_selection() -> None:
         ]
     }
     with pytest.raises(yaml.YAMLError, match="must be a mapping") as caught:
-        loader.load_include(StringIO('<<<: !include-all "dir/bundle.yaml"\n'))
-    assert get_include_route(caught.value)[-1].tag == "!include-all"
+        loader.load_include(StringIO('<<<: !include {documents: all, path: "dir/bundle.yaml"}\n'))
+    assert get_include_route(caught.value)[-1].tag == "!include"
 
 
 @pytest.mark.parametrize("suffix", ["json", "jsonl", "toml", "csv"])
@@ -127,7 +127,7 @@ def test_all_documents_requires_yaml_format(suffix: str) -> None:
     root = MemoryRoot("formats")
     with pytest.raises(yaml.YAMLError, match="requires a YAML source"):
         load_yaml_compose(
-            StringIO(f'!include-all "data.{suffix}"\n'),
+            StringIO(f'!include {{documents: all, path: "data.{suffix}"}}\n'),
             allowed_roots=[root],
             include_resolver=MemoryIncludeResolver(root, {f"data.{suffix}": ""}),
         )
@@ -136,7 +136,7 @@ def test_all_documents_requires_yaml_format(suffix: str) -> None:
 def test_unknown_suffix_retains_existing_yaml_dispatch() -> None:
     root = MemoryRoot("unknown")
     assert load_yaml_compose(
-        StringIO('!include-all "data.config"\n'),
+        StringIO('!include {documents: all, path: "data.config"}\n'),
         allowed_roots=[root],
         include_resolver=MemoryIncludeResolver(root, {"data.config": "---\none\n---\ntwo\n"}),
     ) == ["one", "two"]
@@ -154,7 +154,7 @@ def test_custom_yaml_loader_is_used_for_every_document(recursive: bool) -> None:
 
     CustomLoader.add_constructor("!custom", construct_custom)
     assert load_yaml_compose(
-        StringIO('!include-all "bundle.yaml"\n'),
+        StringIO('!include {documents: all, path: "bundle.yaml"}\n'),
         allowed_roots=[root],
         include_resolver=MemoryIncludeResolver(root, {"bundle.yaml": "---\n!custom one\n---\n!custom two\n"}),
         yaml_loader=CustomLoader,
@@ -180,7 +180,7 @@ def test_shared_limits_cover_whole_stream(limits: IncludeLimits) -> None:
     root = MemoryRoot("budget")
     with pytest.raises(yaml.YAMLError, match=r"maximum|limit"):
         load_yaml_compose(
-            StringIO('!include-all {path: "bundle.yaml", json_pointer: "/0"}\n'),
+            StringIO('!include {documents: all, path: "bundle.yaml", json_pointer: "/0"}\n'),
             allowed_roots=[root],
             include_limits=limits,
             include_resolver=MemoryIncludeResolver(root, {"bundle.yaml": "---\n1\n---\nlong-value\n"}),
@@ -191,7 +191,7 @@ def test_each_document_is_not_counted_as_a_separate_file() -> None:
     root = MemoryRoot("count")
     content = "---\none\n---\ntwo\n"
     assert load_yaml_compose(
-        StringIO('!include-all "bundle.yaml"\n'),
+        StringIO('!include {documents: all, path: "bundle.yaml"}\n'),
         allowed_roots=[root],
         include_resolver=MemoryIncludeResolver(root, {"bundle.yaml": content}),
         include_limits=IncludeLimits(max_include_files=1, max_include_depth=1, max_total_include_bytes=len(content)),
@@ -202,7 +202,7 @@ def test_nested_reads_in_unselected_documents_share_budget() -> None:
     root = MemoryRoot("nested-budget")
     with pytest.raises(yaml.YAMLError, match="maximum include count"):
         load_yaml_compose(
-            StringIO('!include-all {path: "bundle.yaml", json_pointer: "/0"}\n'),
+            StringIO('!include {documents: all, path: "bundle.yaml", json_pointer: "/0"}\n'),
             allowed_roots=[root],
             max_include_files=1,
             include_resolver=MemoryIncludeResolver(
@@ -215,17 +215,18 @@ def test_nested_reads_in_unselected_documents_share_budget() -> None:
         )
 
 
-@pytest.mark.parametrize("tag", ["!include", "!include-all"])
-def test_recursive_cycle_detection_uses_source_not_selector(tag: str) -> None:
+@pytest.mark.parametrize("documents", ["single", "all"])
+def test_recursive_cycle_detection_uses_source_not_selector(documents: str) -> None:
     root = MemoryRoot("cycle")
+    nested = f'!include {{path: "bundle.yaml", documents: {documents}, json_pointer: "/0"}}'
     with pytest.raises(yaml.YAMLError, match="include cycle detected"):
         load_yaml_compose(
-            StringIO('!include-all {path: "bundle.yaml", json_pointer: "/0"}\n'),
+            StringIO('!include {documents: all, path: "bundle.yaml", json_pointer: "/0"}\n'),
             allowed_roots=[root],
             include_resolver=MemoryIncludeResolver(
                 root,
                 {
-                    "bundle.yaml": f'---\none\n---\n{tag} {{path: "bundle.yaml", json_pointer: "/0"}}\n',
+                    "bundle.yaml": f"---\none\n---\n{nested}\n",
                 },
             ),
         )
@@ -242,7 +243,7 @@ def test_resolver_source_format_and_closed_stream() -> None:
 
     assert (
         load_yaml_compose(
-            StringIO('!include-all {path: "alias", json_pointer: "/1"}\n'),
+            StringIO('!include {documents: all, path: "alias", json_pointer: "/1"}\n'),
             allowed_roots=[root],
             include_resolver=Resolver(),
         )
@@ -259,7 +260,7 @@ def test_filesystem_confines_stream_sources(test_path: Path) -> None:
     (allowed / "link.yaml").symlink_to(outside)
     config = allowed / "main.yaml"
     config.write_text(
-        '%LOADER YamlCompose\n---\n!include-all {path: "link.yaml", json_pointer: "/0"}\n', encoding="utf-8"
+        '%LOADER YamlCompose\n---\n!include {documents: all, path: "link.yaml", json_pointer: "/0"}\n', encoding="utf-8"
     )
     with pytest.raises(yaml.YAMLError, match="outside the allowed roots"):
         load_yaml_file(config)
@@ -292,7 +293,7 @@ def test_late_parse_failure_disposes_yaml_loaders_and_closes_source(recursive: b
 
     with pytest.raises(yaml.YAMLError):
         load_yaml_compose(
-            StringIO('!include-all {path: "bundle.yaml", json_pointer: "/0"}\n'),
+            StringIO('!include {documents: all, path: "bundle.yaml", json_pointer: "/0"}\n'),
             allowed_roots=[root],
             include_resolver=Resolver(),
             yaml_loader=CustomLoader,
@@ -318,7 +319,7 @@ def test_explicit_non_yaml_format_is_rejected_before_source_open() -> None:
 
     with pytest.raises(yaml.YAMLError, match="requires a YAML source"):
         load_yaml_compose(
-            StringIO('!include-all "bundle.yaml"\n'),
+            StringIO('!include {documents: all, path: "bundle.yaml"}\n'),
             allowed_roots=[root],
             include_resolver=Resolver(),
         )

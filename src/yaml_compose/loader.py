@@ -64,7 +64,6 @@ from .tags import (
     COMPOSE_LOADER_TAG,
     DEEP_MERGE_KEY,
     DELETE_TAG,
-    INCLUDE_ALL_TAG,
     INCLUDE_MANY_TAG,
     INCLUDE_RAW_TAG,
     INCLUDE_TABLE_TAG,
@@ -467,10 +466,6 @@ class IncludeLoader(SafeLoader):
         return loader._include(node)
 
     @staticmethod
-    def _construct_include_all(loader: IncludeLoader, node: Node) -> object:
-        return loader._include(node, all_documents=True)
-
-    @staticmethod
     def _construct_include_table(loader: IncludeLoader, node: Node) -> object:
         return loader._include(node, table=True)
 
@@ -849,13 +844,12 @@ class IncludeLoader(SafeLoader):
         node: Node,
         *,
         table: bool = False,
-        all_documents: bool = False,
         tag_override: str | None = None,
         provided_spec: IncludeSpec | None = None,
         resolved_override: ResolvedInclude | None = None,
     ) -> object:
         """Load a structured value, all YAML documents, or an explicit table."""
-        tag = tag_override or (INCLUDE_ALL_TAG if all_documents else INCLUDE_TABLE_TAG if table else INCLUDE_TAG)
+        tag = tag_override or (INCLUDE_TABLE_TAG if table else INCLUDE_TAG)
         frame = self._route_frame(node, tag=tag)
         route = (*self.include_route, frame)
         try:
@@ -866,6 +860,7 @@ class IncludeLoader(SafeLoader):
                 resolved_override=resolved_override,
             )
             route = (*self.include_route, frame)
+            all_documents = spec.all_documents
             try:
                 selection = self.format_registry.select_format(include_source, format_id=resolved.format_id)
             except UnknownFormatError as exc:
@@ -875,7 +870,7 @@ class IncludeLoader(SafeLoader):
             if all_documents and adapter is not None:
                 _include_error(
                     node,
-                    f"{INCLUDE_ALL_TAG} requires a YAML source; resolved as {descriptor.format_id!r}",
+                    f"documents: all requires a YAML source; resolved as {descriptor.format_id!r}",
                     tag=tag,
                 )
             if table:
@@ -1182,7 +1177,6 @@ class IncludeLoader(SafeLoader):
 
 for _tag, _constructor in (
     (INCLUDE_TAG, IncludeLoader._construct_include),  # pyright: ignore[reportPrivateUsage]
-    (INCLUDE_ALL_TAG, IncludeLoader._construct_include_all),  # pyright: ignore[reportPrivateUsage]
     (INCLUDE_MANY_TAG, construct_include_many),
     (INCLUDE_TABLE_TAG, IncludeLoader._construct_include_table),  # pyright: ignore[reportPrivateUsage]
     (INCLUDE_RAW_TAG, IncludeLoader._construct_include_raw),  # pyright: ignore[reportPrivateUsage]

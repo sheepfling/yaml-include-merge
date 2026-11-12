@@ -13,7 +13,9 @@ from yaml_compose import JsonPathLimits, MemoryIncludeResolver, MemoryRoot, load
 
 def _load_stream(content: str, query: str, *, many: bool, recursive: bool = True) -> object:
     root = MemoryRoot("stream-selection")
-    options = "!include-many {paths: [bundle.yaml], documents: all" if many else "!include-all {path: bundle.yaml"
+    options = (
+        "!include-many {paths: [bundle.yaml], documents: all" if many else "!include {documents: all, path: bundle.yaml"
+    )
     return load_yaml_compose(
         StringIO(options + ", json_path: " + json.dumps(query) + "}"),
         allowed_roots=[root],
@@ -133,7 +135,9 @@ def test_stream_slice_does_not_hide_late_parse_errors(monkeypatch: pytest.Monkey
 @pytest.mark.parametrize("many", [False, True])
 def test_stream_slice_charges_complete_selection_input(many: bool) -> None:
     root = MemoryRoot("stream-budget")
-    options = "!include-many {paths: [bundle.yaml], documents: all" if many else "!include-all {path: bundle.yaml"
+    options = (
+        "!include-many {paths: [bundle.yaml], documents: all" if many else "!include {documents: all, path: bundle.yaml"
+    )
     with pytest.raises(yaml.YAMLError, match="maximum input nodes"):
         load_yaml_compose(
             StringIO(options + ", json_path: '$[:1]'}"),

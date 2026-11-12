@@ -11,13 +11,10 @@ COMPOSE_LOADER_TAG = "YamlCompose"
 """Value of ``%LOADER`` that opts a document into yaml-compose behavior."""
 
 INCLUDE_TAG = "!include"
-"""Tag that loads a structured YAML or registered-format document."""
+"""Tag that loads one structured document, or an explicit YAML document list."""
 
 INCLUDE_MANY_TAG = "!include-many"
 """Tag that collects one result per explicit source or filesystem glob match."""
-
-INCLUDE_ALL_TAG = "!include-all"
-"""Tag that loads a YAML stream as a list of all its documents."""
 
 INCLUDE_TABLE_TAG = "!include-table"
 """Tag that loads a CSV source as ordered rows of strings."""
@@ -53,7 +50,6 @@ __all__ = (
     "COMPOSE_LOADER_TAG",
     "DEEP_MERGE_KEY",
     "DELETE_TAG",
-    "INCLUDE_ALL_TAG",
     "INCLUDE_MANY_TAG",
     "INCLUDE_RAW_TAG",
     "INCLUDE_TABLE_TAG",

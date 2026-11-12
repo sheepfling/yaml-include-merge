@@ -9,6 +9,7 @@ import pytest
 import yaml
 from yaml import Node
 
+import yaml_compose
 from yaml_compose import (
     IncludeLimits,
     IncludeRequest,
@@ -34,7 +35,6 @@ def load_object(tag: str, options: dict[str, object], files: dict[str, str | byt
     ("tag", "path", "content", "expected"),
     [
         ("!include", "data.yaml", "a: 1\n", {"a": 1}),
-        ("!include-all", "data.yaml", "---\na: 1\n---\nb: 2\n", [{"a": 1}, {"b": 2}]),
         ("!include-table", "data.csv", "a,b\n1,2\n", [["a", "b"], ["1", "2"]]),
         ("!include-text", "data.txt", "\ufeffhéllo\r\n \t", "\ufeffhéllo\r\n \t"),
         ("!include-raw", "data.bin", b"\x00\xff\r\n", b"\x00\xff\r\n"),
@@ -46,7 +46,7 @@ def test_path_only_mapping_preserves_each_tag_result(
     assert load_object(tag, {"path": path}, {path: content}) == expected
 
 
-@pytest.mark.parametrize("tag", ["!include", "!include-all", "!include-table", "!include-text", "!include-raw"])
+@pytest.mark.parametrize("tag", ["!include", "!include-table", "!include-text", "!include-raw"])
 @pytest.mark.parametrize("shape", ["{}", "[]", "{path: ''}", "{path: null}", "{path: true}", "{path: [x]}"])
 def test_invalid_object_shape_is_a_marked_error(tag: str, shape: str) -> None:
     with pytest.raises(yaml.YAMLError) as error:
@@ -71,6 +71,20 @@ def test_invalid_object_shape_is_a_marked_error(tag: str, shape: str) -> None:
         "!include {<<: {path: x}}",
         "!include {42: x, path: x}",
         "!include {path: !include other.yaml}",
+        "!include {path: x, documents: null}",
+        "!include {path: x, documents: true}",
+        "!include {path: x, documents: 1}",
+        "!include {path: x, documents: []}",
+        "!include {path: x, documents: {mode: all}}",
+        "!include {path: x, documents: ''}",
+        "!include {path: x, documents: All}",
+        "!include {path: x, documents: first}",
+        "!include {path: x, documents: all, documents: single}",
+        "!include {path: x, documents: !include mode.yaml}",
+        "!include-table {path: x, documents: all}",
+        "!include-table {path: x, documents: single}",
+        "!include-text {path: x, documents: all}",
+        "!include-raw {path: x, documents: single}",
         "!include-text {path: x, json_pointer: ''}",
         "!include-raw {path: x, json_path: '$'}",
         "!include-text {path: x, encoding: missing-encoding-xyz}",
@@ -175,12 +189,12 @@ def test_raw_byte_ranges_are_zero_based_and_clip_at_eof(options: dict[str, int],
     assert load_object("!include-raw", {"path": "data", **options}, {"data": b"\x00\xffabcdef"}) == expected
 
 
-@pytest.mark.parametrize("tag", ["!include", "!include-all", "!include-table"])
+@pytest.mark.parametrize("tag,documents", [("!include", None), ("!include", "all"), ("!include-table", None)])
 def test_mapping_jsonpath_preserves_nodelist_semantics_and_configured_limits(
-    monkeypatch: pytest.MonkeyPatch, tag: str
+    monkeypatch: pytest.MonkeyPatch, tag: str, documents: str | None
 ) -> None:
     limits = JsonPathLimits(max_matches=3)
-    expected = [["a", "b"]] if tag == "!include-table" else [{"a": 1}] if tag == "!include-all" else {"a": 1}
+    expected = [["a", "b"]] if tag == "!include-table" else [{"a": 1}] if documents == "all" else {"a": 1}
     source = "a,b\n" if tag == "!include-table" else "a: 1\n"
     path = "data.csv" if tag == "!include-table" else "data.yaml"
     calls: list[tuple[object, str, JsonPathLimits]] = []
@@ -191,8 +205,9 @@ def test_mapping_jsonpath_preserves_nodelist_semantics_and_configured_limits(
 
     monkeypatch.setattr("yaml_compose.loader.select_jsonpath", select)
     root = MemoryRoot("query")
+    options = "" if documents is None else f", documents: {documents}"
     result = load_yaml_compose(
-        StringIO(f"{tag} {{path: {path}, json_path: '$'}}"),
+        StringIO(f"{tag} {{path: {path}, json_path: '$'{options}}}"),
         allowed_roots=[root],
         include_resolver=MemoryIncludeResolver(root, {path: source}),
         jsonpath_limits=limits,
@@ -223,7 +238,7 @@ def test_jsonpath_input_type_and_query_limits_apply_to_mapping() -> None:
     "spec",
     [
         "!include {path: data.yaml, json_pointer: /value}",
-        "!include-all {path: data.yaml, json_pointer: /0/value}",
+        "!include {path: data.yaml, documents: all, json_pointer: /0/value}",
         "!include-text {path: data.yaml, lines: {end: 1}}",
         "!include-raw {path: data.yaml, length: 1}",
     ],
@@ -248,8 +263,17 @@ def test_selection_never_bypasses_full_source_budgets(spec: str, limits: Include
         )
 
 
-@pytest.mark.parametrize("tag", ["!include", "!include-all", "!include-table", "!include-text", "!include-raw"])
-def test_object_sources_remain_confined_before_opening(tag: str) -> None:
+@pytest.mark.parametrize(
+    "tag,documents",
+    [
+        ("!include", None),
+        ("!include", "all"),
+        ("!include-table", None),
+        ("!include-text", None),
+        ("!include-raw", None),
+    ],
+)
+def test_object_sources_remain_confined_before_opening(tag: str, documents: str | None) -> None:
     allowed, outside = MemoryRoot("allowed"), MemoryRoot("outside")
     opened = False
 
@@ -262,8 +286,11 @@ def test_object_sources_remain_confined_before_opening(tag: str) -> None:
 
             return ResolvedInclude(MemorySource(outside, PurePosixPath("data")), open_binary)
 
+    options = "" if documents is None else f", documents: {documents}"
     with pytest.raises(yaml.YAMLError, match="outside the allowed roots"):
-        load_yaml_compose(StringIO(f"{tag} {{path: data}}"), allowed_roots=[allowed], include_resolver=Resolver())
+        load_yaml_compose(
+            StringIO(f"{tag} {{path: data{options}}}"), allowed_roots=[allowed], include_resolver=Resolver()
+        )
     assert not opened
 
 
@@ -338,3 +365,69 @@ def test_range_options_follow_yaml_integer_notation() -> None:
         )
         == b"c"
     )
+
+
+@pytest.mark.parametrize("documents", [None, "single"])
+@pytest.mark.parametrize(
+    "content,expected", [("", None), ("null", None), ("1", 1), ("[1, 2]", [1, 2]), ("x: 1", {"x": 1})]
+)
+def test_single_document_mode_preserves_existing_values(documents: str | None, content: str, expected: object) -> None:
+    options: dict[str, object] = {"path": "data.yaml"}
+    if documents is not None:
+        options["documents"] = documents
+    assert load_object("!include", options, {"data.yaml": content}) == expected
+
+
+def test_explicit_single_mode_preserves_registered_format_behavior() -> None:
+    assert load_object("!include", {"path": "data.json", "documents": "single"}, {"data.json": "[1,2]"}) == [1, 2]
+
+
+def test_explicit_single_mode_still_rejects_multiple_yaml_documents() -> None:
+    with pytest.raises(yaml.YAMLError, match="expected a single document"):
+        load_object("!include", {"path": "data.yaml", "documents": "single"}, {"data.yaml": "1\n---\n2"})
+
+
+def test_document_mode_is_per_include_not_inherited_by_nested_sources() -> None:
+    files: dict[str, str | bytes] = {"outer.yaml": "nested: !include inner.yaml", "inner.yaml": "1\n---\n2"}
+    with pytest.raises(yaml.YAMLError, match="expected a single document") as error:
+        load_object("!include", {"path": "outer.yaml", "documents": "all"}, files)
+    assert [frame.requested_path for frame in get_include_route(error.value)] == ["outer.yaml", "inner.yaml"]
+    files["outer.yaml"] = "nested: !include {path: inner.yaml, documents: all}"
+    assert load_object("!include", {"path": "outer.yaml", "documents": "all"}, files) == [{"nested": [1, 2]}]
+
+
+@pytest.mark.parametrize("format_id", ["json", "jsonl", "csv"])
+def test_all_document_mode_rejects_non_yaml_resolver_format_before_opening(format_id: str) -> None:
+    root = MemoryRoot("documents-format")
+
+    class Resolver:
+        def resolve(self, request: IncludeRequest) -> ResolvedInclude:
+            def open_binary() -> BytesIO:
+                raise AssertionError("non-YAML stream source must not be opened")
+
+            return ResolvedInclude(MemorySource(root, PurePosixPath("data.yaml")), open_binary, format_id=format_id)
+
+    with pytest.raises(yaml.YAMLError, match="documents: all requires a YAML source") as error:
+        load_yaml_compose(
+            StringIO("!include {path: data.yaml, documents: all}"), allowed_roots=[root], include_resolver=Resolver()
+        )
+    assert get_include_route(error.value)[-1].tag == "!include"
+
+
+@pytest.mark.parametrize("spec", ["!include-all data.yaml", "!include-all {path: data.yaml}"])
+def test_unreleased_stream_shortcut_is_not_registered(spec: str) -> None:
+    with pytest.raises(yaml.YAMLError, match="could not determine a constructor"):
+        load_yaml_compose(StringIO(spec))
+    assert "INCLUDE_ALL_TAG" not in yaml_compose.__all__
+    assert not hasattr(yaml_compose, "INCLUDE_ALL_TAG")
+
+
+def test_removed_shortcut_does_not_override_a_callers_custom_tag() -> None:
+    class Loader(yaml.SafeLoader):
+        pass
+
+    def construct(loader: yaml.SafeLoader, node: Node) -> str:
+        return "custom meaning"
+
+    Loader.add_constructor("!include-all", construct)
+    assert load_yaml_compose(StringIO("!include-all ignored"), yaml_loader=Loader) == "custom meaning"

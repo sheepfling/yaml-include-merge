@@ -84,7 +84,7 @@ enabled: !include {path: catalog.json, json_path: '$.items[?@.enabled == true]'}
 ```
 
 `json_path` always returns a list, even with zero or one match. It is also available on
-`!include-all` and `!include-table`. Use `!jsonpath [source, query]` to query an inline value
+`!include-many` and `!include-table`. Use `!jsonpath [source, query]` to query an inline value
 or a separately composed source. JSONPath and JSON Pointer are explicit, separate options. See
 [JSONPath selection](docs/jsonpath.md) for strict syntax, supported values, resource limits,
 optional-dependency setup, and subprocess requirements.
@@ -97,7 +97,6 @@ the composition layer, so included mappings can participate in the same merge op
 | Tag              | Input                                | Result                              |
 | ---------------- | ------------------------------------ | ----------------------------------- |
 | `!include`       | YAML, JSON-family, TOML, INI, dotenv | Native Python value                 |
-| `!include-all`   | YAML document stream                 | List of documents, even zero or one |
 | `!include-table` | CSV or registered table adapter      | Rows of strings; first row included |
 | `!include-text`  | Text (UTF-8 by default)              | Exact decoded string                |
 | `!include-raw`   | Any file                             | Exact bytes                         |
@@ -130,12 +129,13 @@ The [worked format examples](docs/examples.md#include-json-and-toml-sources) cov
 TOML, JSONC, JSON5, JSON Lines, NDJSON, and CSV. See the [INI, dotenv, and text examples](docs/examples.md#ini-dotenv-and-text-includes)
 for string, text, and raw includes.
 
-Use `!include-all "bundle.yaml"` to include every document in a YAML stream as a list.
+Use `!include {path: bundle.yaml, documents: all}` to include every document in a YAML stream as a list.
 The result is always a document list, even for an empty source or a single document.
-`!include-all {path: bundle.yaml, json_pointer: /1/settings}` selects `settings` from the second document.
-`!include-all {path: bundle.yaml, json_path: '$[1:3]'}` selects the second and third documents.
+`!include {documents: all, path: bundle.yaml, json_pointer: /1/settings}` selects `settings` from the second document.
+`!include {documents: all, path: bundle.yaml, json_path: '$[1:3]'}` selects the second and third documents.
 The document-list root is retained even for a single document, so indexing and slicing stay consistent.
-Ordinary `!include` keeps its single-document behavior. See [YAML streams](docs/formats.md#yaml-document-streams).
+Scalar `!include` and the default `documents: single` keep single-document behavior.
+See [YAML streams](docs/formats.md#yaml-document-streams).
 
 ## Collect several files
 
@@ -161,6 +161,7 @@ result shapes, and `IncludeLimits.max_glob_steps`.
 `load_yaml_compose` when you want to explicitly select composition. For repeated loads or
 shared policies, configure a `YamlConfigLoader` once. The default parser uses PyYAML's
 `SafeLoader`; applications can provide a trusted custom loader for their own YAML tags.
+The optional LibYAML C extension is not required; the default uses the Python loader.
 
 Filesystem includes resolve relative to the file containing the reference. The default
 resolver is local-only; it does not fetch URLs. Resolved files must stay within allowed roots,
@@ -172,6 +173,8 @@ Applications can supply an `IncludeResolver` for their own trusted sources; see 
 Loading returns values, not an editable YAML syntax tree: comments, formatting, and per-key
 source provenance are not retained. PyYAML's scalar resolution rules remain in effect, and
 explicit duplicate mapping keys are rejected.
+Mappings use Python key equality, so typed keys such as `true` and `1` can collide across
+overlay sources; see the [documented example and string-key alternative](docs/design-notes.md#python-mapping-key-equality).
 
 When a nested include fails, the original PyYAML exception type and leaf mark are preserved.
 The error prints the route from the root include site to the failing source. Call
