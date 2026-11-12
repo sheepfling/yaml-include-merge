@@ -16,13 +16,15 @@ import re
 from collections.abc import Iterator
 from dataclasses import dataclass
 from io import StringIO
-from typing import ClassVar, Literal, NoReturn, Protocol, cast
+from typing import ClassVar, Final, Literal, NoReturn, Protocol, cast, get_args
 
 from ._compat import toml_parser_module
 from .resolver import IncludeSource
 
 _FORMAT_ID = re.compile(r"[a-z][a-z0-9_-]*\Z")
 FormatCapability = Literal["document", "records", "table"]
+_FORMAT_CAPABILITIES: tuple[str, ...] = get_args(FormatCapability)
+_YAML_FORMAT_ID: Final = "yaml"
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,7 +57,7 @@ class FormatDescriptor:
             raise ValueError("format filenames must be non-empty basenames")
         if len(set(filenames)) != len(filenames):
             raise ValueError("format filenames must be unique")
-        if self.capability not in ("document", "records", "table"):
+        if self.capability not in _FORMAT_CAPABILITIES:
             raise ValueError("format capability must be 'document', 'records', or 'table'")
         object.__setattr__(self, "suffixes", suffixes)
         object.__setattr__(self, "filenames", filenames)
@@ -543,7 +545,7 @@ class FormatRegistry:
         self.register(DotenvAdapter())
 
     def _install_yaml(self) -> None:
-        descriptor = FormatDescriptor("yaml", (".yaml", ".yml"))
+        descriptor = FormatDescriptor(_YAML_FORMAT_ID, (".yaml", ".yml"))
         self._formats[descriptor.format_id] = _FormatRegistration(descriptor, None)
         for suffix in descriptor.suffixes:
             self._suffixes[suffix] = descriptor.format_id
@@ -578,7 +580,7 @@ class FormatRegistry:
         if descriptor.capability == "table" and not callable(iter_records):
             raise TypeError("table adapters must provide an iter_records(source) method")
         format_id = descriptor.format_id
-        if format_id == "yaml":
+        if format_id == _YAML_FORMAT_ID:
             raise ValueError("the built-in YAML composition entry cannot be replaced")
 
         current = self._formats.get(format_id)
@@ -615,7 +617,7 @@ class FormatRegistry:
         """Remove a registered adapter; the built-in YAML entry is reserved."""
         if self._frozen:
             raise TypeError("a loader's format registry snapshot is read-only")
-        if format_id == "yaml":
+        if format_id == _YAML_FORMAT_ID:
             raise ValueError("the built-in YAML composition entry cannot be removed")
         try:
             registration = self._formats.pop(format_id)
@@ -658,7 +660,7 @@ class FormatRegistry:
         else:
             selected_id = self._filenames.get(
                 source.path.name.lower(),
-                self._suffixes.get(source.path.suffix.lower(), "yaml"),
+                self._suffixes.get(source.path.suffix.lower(), _YAML_FORMAT_ID),
             )
             registration = self._formats[selected_id]
         return FormatSelection(registration.descriptor, registration.adapter)

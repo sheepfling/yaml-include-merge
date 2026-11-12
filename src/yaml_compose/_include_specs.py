@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import codecs
 from dataclasses import dataclass
+from typing import Literal, get_args
 
 from yaml import MappingNode, Node, ScalarNode, SequenceNode
 from yaml.constructor import SafeConstructor
@@ -11,6 +12,24 @@ from yaml.resolver import BaseResolver
 
 from ._selectors import validate_json_pointer
 from .tags import INCLUDE_MANY_TAG, INCLUDE_RAW_TAG, INCLUDE_TAG, INCLUDE_TEXT_TAG
+
+_OptionName = Literal[
+    "path",
+    "paths",
+    "glob",
+    "documents",
+    "json_pointer",
+    "json_path",
+    "encoding",
+    "lines",
+    "start",
+    "end",
+    "offset",
+    "length",
+]
+_DocumentMode = Literal["single", "all"]
+_DOCUMENT_MODES: tuple[str, ...] = get_args(_DocumentMode)
+_SELECTOR_OPTIONS: frozenset[_OptionName] = frozenset(("json_pointer", "json_path"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,11 +48,13 @@ class IncludeSpec:
     all_documents: bool = False
 
 
-def _mapping(node: Node, *, name: str, allowed: frozenset[str], tagged: bool = False) -> dict[str, Node]:
+def _mapping(
+    node: Node, *, name: str, allowed: frozenset[_OptionName], tagged: bool = False
+) -> dict[_OptionName, Node]:
     """Read option nodes without evaluating YAML tags, merges, or expressions."""
     if not isinstance(node, MappingNode) or (not tagged and node.tag != BaseResolver.DEFAULT_MAPPING_TAG):
         raise ValueError(f"{name} must be a mapping")
-    result: dict[str, Node] = {}
+    result: dict[_OptionName, Node] = {}
     for key, value in node.value:
         if not isinstance(key, ScalarNode) or key.tag != BaseResolver.DEFAULT_SCALAR_TAG:
             raise ValueError(f"{name} option names must be plain strings; YAML merges are not supported")
@@ -68,23 +89,34 @@ def _integer(node: Node, *, name: str, minimum: int) -> int:
     return value
 
 
-def _all_documents(options: dict[str, Node]) -> bool:
+def _all_documents(options: dict[_OptionName, Node]) -> bool:
     """Validate the shared, explicit YAML stream mode without constructing tags."""
     documents = _string(options["documents"], name="documents") if "documents" in options else "single"
-    if documents not in ("single", "all"):
+    if documents not in _DOCUMENT_MODES:
         raise ValueError("documents must be 'single' or 'all'")
     return documents == "all"
 
 
+def _json_selectors(options: dict[_OptionName, Node]) -> tuple[str | None, str | None]:
+    """Validate the same selector contract for single and collected sources."""
+    if "json_pointer" in options and "json_path" in options:
+        raise ValueError("json_pointer and json_path are mutually exclusive")
+    pointer = _string(options["json_pointer"], name="json_pointer", empty=True) if "json_pointer" in options else None
+    if pointer is not None:
+        validate_json_pointer(pointer)
+    query = _string(options["json_path"], name="json_path") if "json_path" in options else None
+    return pointer, query
+
+
 def parse_include_spec(node: Node, *, tag: str) -> IncludeSpec:
     """Validate inert mapping fields that are meaningful to the given include tag."""
-    allowed = {"path"}
+    allowed: set[_OptionName] = {"path"}
     if tag == INCLUDE_TEXT_TAG:
         allowed.update(("encoding", "lines"))
     elif tag == INCLUDE_RAW_TAG:
         allowed.update(("offset", "length"))
     else:
-        allowed.update(("json_pointer", "json_path"))
+        allowed.update(_SELECTOR_OPTIONS)
         if tag == INCLUDE_TAG:
             allowed.add("documents")
     if not isinstance(node, MappingNode):
@@ -119,12 +151,7 @@ def parse_include_spec(node: Node, *, tag: str) -> IncludeSpec:
                 raise ValueError("lines.end must be greater than or equal to lines.start")
         return IncludeSpec(path, encoding=encoding, line_start=start, line_end=end, select_lines="lines" in options)
 
-    if "json_pointer" in options and "json_path" in options:
-        raise ValueError("json_pointer and json_path are mutually exclusive")
-    pointer = _string(options["json_pointer"], name="json_pointer", empty=True) if "json_pointer" in options else None
-    if pointer is not None:
-        validate_json_pointer(pointer)
-    query = _string(options["json_path"], name="json_path") if "json_path" in options else None
+    pointer, query = _json_selectors(options)
     return IncludeSpec(path, json_pointer=pointer, json_path=query, all_documents=all_documents)
 
 
@@ -152,7 +179,7 @@ def parse_many_include_spec(node: Node) -> ManyIncludeSpec:
     options = _mapping(
         node,
         name=INCLUDE_MANY_TAG,
-        allowed=frozenset(("paths", "documents", "json_pointer", "json_path")),
+        allowed=frozenset[_OptionName](("paths", "documents")) | _SELECTOR_OPTIONS,
         tagged=True,
     )
     if "paths" not in options:
@@ -171,10 +198,5 @@ def parse_many_include_spec(node: Node) -> ManyIncludeSpec:
         else:
             sources.append(ManySource(_string(entry, name="path"), False, entry))
     all_documents = _all_documents(options)
-    if "json_pointer" in options and "json_path" in options:
-        raise ValueError("json_pointer and json_path are mutually exclusive")
-    pointer = _string(options["json_pointer"], name="json_pointer", empty=True) if "json_pointer" in options else None
-    if pointer is not None:
-        validate_json_pointer(pointer)
-    query = _string(options["json_path"], name="json_path") if "json_path" in options else None
+    pointer, query = _json_selectors(options)
     return ManyIncludeSpec(tuple(sources), all_documents, pointer, query)

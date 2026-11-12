@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from pathlib import Path
 
-from ._search import IncludeSearch, is_explicit_relative, search_locations
+from ._search import DEFAULT_INCLUDE_SEARCH, IncludeSearch, is_explicit_relative, search_locations
 
 
 def resolve_include_file(
@@ -14,7 +14,7 @@ def resolve_include_file(
     search_paths: Iterable[Path],
     allowed_roots: Iterable[Path],
     *,
-    include_search: IncludeSearch = "local-first",
+    include_search: IncludeSearch = DEFAULT_INCLUDE_SEARCH,
 ) -> Path:
     """Resolve a local include against its parent, search paths, or absolute path.
 

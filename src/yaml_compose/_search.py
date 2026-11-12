@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from pathlib import PurePath
-from typing import Literal, TypeVar, cast, get_args
+from typing import Final, Literal, TypeVar, cast, get_args
 
 IncludeSearch = Literal["local-first", "search-first", "local-only", "search-only"]
 """Lookup policy for include names without an explicit relative prefix.
@@ -15,6 +15,7 @@ Absolute paths and explicit ``./`` or ``../`` paths bypass this policy.
 """
 
 _INCLUDE_SEARCH_CHOICES: tuple[str, ...] = get_args(IncludeSearch)
+DEFAULT_INCLUDE_SEARCH: Final[IncludeSearch] = "local-first"
 
 _TPath = TypeVar("_TPath", bound=PurePath)
 
