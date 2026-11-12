@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import codecs
-from collections.abc import Callable
 from dataclasses import dataclass
-from typing import cast
 
 from yaml import MappingNode, Node, ScalarNode
 from yaml.constructor import SafeConstructor
@@ -93,10 +91,10 @@ def parse_include_spec(node: Node, *, tag: str) -> IncludeSpec:
     if tag == INCLUDE_TEXT_TAG:
         encoding = _string(options["encoding"], name="encoding") if "encoding" in options else "utf-8"
         try:
-            # Codec registry entries also include bytes-to-bytes transforms.
-            decoder = cast(Callable[[bytes, str], tuple[object, int]], codecs.lookup(encoding).decode)
-            decoded, _ = decoder(b"", "strict")
-            if not isinstance(decoded, str):
+            codec = codecs.lookup(encoding)
+            # Use the same registry distinction as bytes.decode, without
+            # executing a binary transform merely to validate its name.
+            if not getattr(codec, "_is_text_encoding", True):
                 raise ValueError(f"encoding {encoding!r} is not a supported text encoding")
         except (LookupError, TypeError, UnicodeError) as exc:
             raise ValueError(f"encoding {encoding!r} is not a supported text encoding") from exc
