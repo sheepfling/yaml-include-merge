@@ -56,8 +56,9 @@ the second and third documents, `$[-2:]` the last two, and `$[::-1]` all documen
 order. `$` matches the entire document list as one nested value; `$[:]` matches each document.
 If a document is itself an array, it stays nested unless the query explicitly selects inside it.
 For `!include` with `sources` and `documents: all`, each query sees one file's document list
-and the outer result retains one nodelist per file, including empty lists. Selection across
-that outer file collection is not supported.
+and the outer result retains one nodelist per file, including empty lists. The same `sources` request does not select across
+that outer file collection. To do so, put the collection in a separate aggregate document
+and include that completed document with its own selector.
 
 `!spread` explicitly inserts matched values into an outer list. A result list is not an
 implicit mapping merge: `<<<: !include {path: data.json, json_path: '$'}` is an error

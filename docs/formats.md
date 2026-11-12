@@ -274,7 +274,9 @@ list for each file, including `[]` for a file with no matches. Both selectors re
 single-source validation rules and JSONPath's optional dependency and resource controls.
 
 The last example returns one list of up to two documents per file, not the last two files.
-Selecting across the outer file collection is not supported by this include contract.
+The same `sources` request does not select across the outer file collection. Put that
+collection in a separate aggregate document and include the completed document with its
+own selector when an outer-file selection is needed.
 Per-document selector scope is not implicit: the document list remains the selection root
 in `documents: all` mode.
 
