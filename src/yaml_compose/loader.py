@@ -1244,8 +1244,9 @@ def _load_composed_text(
     try:
         if all_documents:
             documents: list[object] = []
+            get_data = cast(Callable[[], object], loader.get_data)  # pyright: ignore[reportUnknownMemberType]
             while loader.check_data():  # pyright: ignore[reportUnknownMemberType]
-                documents.append(loader.get_data())
+                documents.append(get_data())
             result = documents
         else:
             result = loader.get_single_data()
