@@ -32,6 +32,83 @@ standard JSON parser and deeply nested input may reach Python's recursion limit.
 [json5 0.17.3 package page](https://pypi.org/project/json5/0.17.3/) and its
 [maintainer documentation](https://github.com/dpranke/pyjson5/blob/main/README.md).
 
+## Select part of an include
+
+Append a URI-fragment [JSON Pointer](https://www.rfc-editor.org/rfc/rfc6901#section-6)
+to select from the completed included value before it is inserted, merged, or spread into its
+parent document. This follows the single-document JSON Pointer convention in
+[RFC 9512 section 1.2](https://www.rfc-editor.org/rfc/rfc9512.html#section-1.2); the separate
+YAML `#*anchor` fragment syntax is not supported:
+
+```yaml
+%LOADER YamlCompose
+---
+<<<: !include "radar_rotator.yaml#/radar"
+array: !include "hardware.yaml#/arrays/kbr"
+first_record: !include "records.jsonl#/0"
+first_name: !include-table "people.csv#/1/0"
+steps: [prepare, !spread [!include "workflow.yaml#/steps"], finish]
+```
+
+Selection is general, with no domain-specific names or expression language. It follows the
+parsed value's shape across YAML, JSON, JSONC, JSON5, TOML, INI, dotenv, record formats, and
+registered adapters:
+
+- `#` selects the entire value, including a scalar or `null`. No fragment also includes the
+  whole value. `#/` selects the mapping key that is the empty string.
+- `#/arrays/kbr` follows exact string mapping keys. Keys are not coerced: a YAML integer key
+  `1` is different from the string key `"1"`.
+- `#/items/0` selects the first sequence element. Indexes are zero-based ASCII decimal
+  integers, without leading zeroes (except `0` itself). Negative indexes, `-`, slices,
+  wildcards, filters, and out-of-range indexes are errors.
+- Escape a literal `/` in a key as `~1` and a literal `~` as `~0`. For example,
+  `#/a~1b/m~0n` selects key `m~n` inside key `a/b`.
+- URI percent escapes decode once as strict UTF-8 before JSON Pointer escapes. Use
+  `#/space%20key` for `space key` and `#/%E2%98%83` for `☃`. A plus sign stays a plus sign.
+  Characters outside the URI fragment grammar, including spaces, `#`, and non-ASCII
+  characters, must be percent-encoded. Malformed percent escapes, invalid UTF-8, and invalid
+  `~` escapes are rejected.
+
+JSONL and NDJSON are lists of parsed records: `#/2/name` selects the `name` member in the
+third record. CSV tables are lists of row lists: `#/1/0` selects the first cell of the second
+row, with the first row still ordinary data. Cells remain strings. A selected row remains a
+list; a selected cell is a scalar. Custom mapping values and list/tuple sequences follow the
+same rules. Other custom Python objects have no implicit attribute lookup. YAML aliases are
+followed through the constructed value; evaluation takes one step per pointer token, so a
+cyclic alias does not cause an unbounded walk. Existing composition restrictions on cyclic
+mapping overlays still apply.
+
+The selected value must still satisfy the operation that consumes it. `<<<` and `<<` require
+mapping sources, and `!spread` requires a sequence. Selecting a scalar does not turn it into a
+mapping or a sequence. Errors identify the include reference, selector, and include-site mark;
+nested errors preserve the include route.
+
+The complete source is read, parsed, and validated before selection. Nested YAML includes and
+composition inside that source finish first. Unselected malformed data and nested include
+cycles still fail. All source bytes and nested reads count toward the existing limits, even
+when the selected value is small; selectors are not a way to read outside configured roots or
+to bypass resource limits. Repeated includes count as separate reads as before.
+
+The first `#` separates the local path from its selector. The local path is not URI-decoded;
+ordinary spaces, percent signs, relative paths, absolute-path policy, and search order retain
+their existing behavior. Resolvers receive only that path; their returned source identity
+still controls format dispatch, confinement, and cycle checks. A literal `#` in a filename is
+now reserved by this syntax: use a fragment-free alias through a custom resolver for such a
+source. Fragment-only same-document references are not supported.
+
+### YAML streams and scalar includes
+
+A YAML sequence within one document is not a multi-document YAML stream. Ordinary `!include`
+continues to require a single YAML document; it rejects a source with multiple `---` documents,
+even when a fragment is present. `#/0` indexes a sequence in that document, not a document in a
+stream. There is currently no implicit flattening, stream merging, or all-documents mode.
+
+`!include-text` and `!include-raw` return scalar strings and bytes. They accept `#` to select
+the whole value, but non-root JSON Pointers are errors; a string is not treated as a character
+array, and bytes are not treated as integer sequences. Text line/character ranges, byte ranges,
+and record/table slices are separate future design work, not JSON Pointer syntax supported by
+this release. Existing file/count/total-byte limits continue to apply to every include tag.
+
 ## JSON Lines and NDJSON records
 
 Both record formats require UTF-8 without a BOM and parse one strict JSON value per LF-delimited

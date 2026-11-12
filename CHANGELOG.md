@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Add URI-fragment JSON Pointer selection to includes, including structured mapping members,
+  sequence elements, JSONL/NDJSON records, and CSV rows/cells. Preserve full-source validation,
+  include routes, resolver confinement, and resource budgets before selection.
+
 ## 0.1.1
 
 - Extend includes with strict JSON, JSONC, optional JSON5, JSONL/NDJSON, TOML, INI,

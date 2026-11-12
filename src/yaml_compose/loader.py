@@ -30,6 +30,7 @@ from ._overlays import YamlDict, YamlIncludeError, YamlType
 from ._overlays import assert_no_markers as _assert_no_overlay_markers
 from ._overlays import merge_mappings as _merge_mappings
 from ._search import IncludeSearch, validate_include_search
+from ._selectors import select_json_pointer, split_include_reference
 from ._streams import read_bounded
 from ._unset import UNSET, UnsetType
 from ._yaml_loader import configured_include_loader, ordinary_loader, validate_yaml_loader
@@ -559,8 +560,21 @@ class IncludeLoader(SafeLoader):
         node: Node,
         value: object,
         route: tuple[IncludeRouteFrame, ...],
+        *,
+        fragment: str | None = None,
     ) -> object:
-        """Keep the originating include route for immediate YAML composition errors."""
+        """Select a value before composition and keep its originating include route."""
+        if fragment is not None:
+            frame = route[-1]
+            try:
+                value = select_json_pointer(value, fragment)
+            except ValueError as exc:
+                _include_error(
+                    node,
+                    f"cannot select {fragment!r} from include {frame.requested_path!r}: {exc}",
+                    exc,
+                    tag=frame.tag,
+                )
         self._include_routes_by_node[node] = route
         return value
 
@@ -597,7 +611,7 @@ class IncludeLoader(SafeLoader):
         node: Node,
         *,
         tag: str,
-    ) -> tuple[ResolvedInclude, IncludeSource, str, IncludeRouteFrame]:
+    ) -> tuple[ResolvedInclude, IncludeSource, str, IncludeRouteFrame, str | None]:
         """Resolve and validate one include source under the current loader context."""
         frame = self._route_frame(node, tag=tag)
         route = (*self.include_route, frame)
@@ -608,6 +622,7 @@ class IncludeLoader(SafeLoader):
             if not name:
                 _include_error(node, f"{tag} expects a non-empty path", tag=tag)
             try:
+                name, fragment = split_include_reference(name)
                 validate_include_name(name, allow_absolute=self.allow_absolute_includes)
             except ValueError as exc:
                 _include_error(node, str(exc), exc, tag=tag)
@@ -656,7 +671,7 @@ class IncludeLoader(SafeLoader):
                     tag=tag,
                 )
 
-            return resolved, include_source, source_label, frame
+            return resolved, include_source, source_label, frame, fragment
         except yaml.YAMLError as exc:
             _attach_include_route(exc, route)
             raise
@@ -717,13 +732,13 @@ class IncludeLoader(SafeLoader):
         frame = self._route_frame(node, tag=INCLUDE_TEXT_TAG)
         route = (*self.include_route, frame)
         try:
-            resolved, _include_source, source_label, frame = self._resolve_include_source(
+            resolved, _include_source, source_label, frame, fragment = self._resolve_include_source(
                 node,
                 tag=INCLUDE_TEXT_TAG,
             )
             route = (*self.include_route, frame)
             content = self._read_include_source(node, resolved, source_label, tag=INCLUDE_TEXT_TAG)
-            return cast(str, self._remember_include_result(node, content.decode("utf-8"), route))
+            return cast(str, self._remember_include_result(node, content.decode("utf-8"), route, fragment=fragment))
         except UnicodeDecodeError as exc:
             try:
                 _include_error(
@@ -744,10 +759,12 @@ class IncludeLoader(SafeLoader):
         frame = self._route_frame(node, tag=INCLUDE_RAW_TAG)
         route = (*self.include_route, frame)
         try:
-            resolved, _include_source, source_label, frame = self._resolve_include_source(node, tag=INCLUDE_RAW_TAG)
+            resolved, _include_source, source_label, frame, fragment = self._resolve_include_source(
+                node, tag=INCLUDE_RAW_TAG
+            )
             route = (*self.include_route, frame)
             content = self._read_include_source(node, resolved, source_label, tag=INCLUDE_RAW_TAG)
-            return cast(bytes, self._remember_include_result(node, content, route))
+            return cast(bytes, self._remember_include_result(node, content, route, fragment=fragment))
         except yaml.YAMLError as exc:
             _attach_include_route(exc, route)
             raise
@@ -758,7 +775,7 @@ class IncludeLoader(SafeLoader):
         frame = self._route_frame(node, tag=tag)
         route = (*self.include_route, frame)
         try:
-            resolved, include_source, source_label, frame = self._resolve_include_source(node, tag=tag)
+            resolved, include_source, source_label, frame, fragment = self._resolve_include_source(node, tag=tag)
             route = (*self.include_route, frame)
             try:
                 selection = self.format_registry.select_format(include_source, format_id=resolved.format_id)
@@ -796,12 +813,14 @@ class IncludeLoader(SafeLoader):
                             tag=tag,
                         ),
                         route,
+                        fragment=fragment,
                     )
                 try:
                     return self._remember_include_result(
                         node,
                         cast(FormatAdapter, adapter).parse(format_input),
                         route,
+                        fragment=fragment,
                     )
                 except FormatDependencyError as exc:
                     _include_error(
@@ -849,6 +868,7 @@ class IncludeLoader(SafeLoader):
                             include_route=route,
                         ),
                         route,
+                        fragment=fragment,
                     )
                 finally:
                     self.budget.current_depth -= 1
@@ -860,6 +880,7 @@ class IncludeLoader(SafeLoader):
                     Loader=cast(type[SafeLoader], ordinary_loader(self.yaml_loader)),
                 ),
                 route,
+                fragment=fragment,
             )
         except yaml.YAMLError as exc:
             _attach_include_route(exc, route)

@@ -93,6 +93,12 @@ cell values. Custom table adapters, such as a caller-supplied TSV parser, can al
 `date`, `time`, or `datetime` objects.
 Raw includes return bytes, which need explicit conversion before JSON serialization.
 
+Select part of a structured include with a URI-fragment JSON Pointer, for example
+`array: !include "hardware.yaml#/arrays/kbr"` or `<<<: !include "defaults.yaml#/service"`.
+Selection happens after parsing the complete source and before parent composition. It also
+supports record indexes and CSV row/cell indexes. Missing paths are marked include errors;
+resource limits still cover the complete source. See [fragment selection](docs/formats.md#select-part-of-an-include).
+
 For parser details and the format adapter API, see the [included formats guide](docs/formats.md).
 The [worked format examples](docs/examples.md#include-json-and-toml-sources) cover JSON,
 TOML, JSONC, JSON5, JSON Lines, NDJSON, and CSV. See the [INI, dotenv, and text examples](docs/examples.md#ini-dotenv-and-text-includes)
