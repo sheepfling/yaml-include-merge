@@ -17,7 +17,13 @@ from typing import BinaryIO, Protocol
 from urllib.parse import urlsplit
 
 from ._paths import resolve_include_file
-from ._search import IncludeSearch, is_explicit_relative, search_locations, validate_include_search
+from ._search import (
+    DEFAULT_INCLUDE_SEARCH,
+    IncludeSearch,
+    is_explicit_relative,
+    search_locations,
+    validate_include_search,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,7 +92,9 @@ IncludeSource = FileSource | MemorySource
 class IncludeRequest:
     """Context passed to an ``IncludeResolver`` for one ``!include`` read.
 
-    ``name`` is the requested include path. ``including`` is the current source
+    ``name`` is the literal local include path. Selectors are separate mapping
+    options and are never embedded in or decoded from this path.
+    ``including`` is the current source
     or ``None`` for a source-free stream. ``search_paths`` control lookup order;
     ``allowed_roots`` are the authorization boundary. The loader has already
     normalized both root tuples before invoking a resolver.
@@ -99,7 +107,7 @@ class IncludeRequest:
     including: IncludeSource | None
     search_paths: tuple[IncludeRoot, ...]
     allowed_roots: tuple[IncludeRoot, ...]
-    include_search: IncludeSearch = "local-first"
+    include_search: IncludeSearch = DEFAULT_INCLUDE_SEARCH
 
     def __post_init__(self) -> None:
         """Reject unsupported lookup policies at the request boundary."""

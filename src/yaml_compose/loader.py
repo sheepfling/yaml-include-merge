@@ -14,22 +14,28 @@ from collections.abc import Callable, Hashable, Iterable
 from dataclasses import dataclass
 from io import StringIO
 from pathlib import Path
-from typing import Generic, NamedTuple, NoReturn, TextIO, cast, overload
+from typing import Generic, NamedTuple, TextIO, cast, overload
 
 import yaml
 from yaml import MappingNode, Node, SafeLoader, ScalarNode, SequenceNode
 from yaml.constructor import ConstructorError
-from yaml.error import MarkedYAMLError
 from yaml.resolver import BaseResolver
 
 from ._compat import _TypeVar
+from ._include_errors import IncludeRouteFrame, get_include_route
+from ._include_errors import attach_include_route as _attach_include_route
+from ._include_errors import include_error as _include_error
+from ._include_many import construct_include_many
+from ._include_specs import IncludeSpec, parse_include_spec
+from ._jsonpath import DEFAULT_JSONPATH_LIMITS, JsonPathLimits, select_jsonpath
 from ._overlays import DELETE as _DELETE
 from ._overlays import ReplaceMarker as _ReplaceMarker
 from ._overlays import SpreadMarker as _SpreadMarker
 from ._overlays import YamlDict, YamlIncludeError, YamlType
 from ._overlays import assert_no_markers as _assert_no_overlay_markers
 from ._overlays import merge_mappings as _merge_mappings
-from ._search import IncludeSearch, validate_include_search
+from ._search import DEFAULT_INCLUDE_SEARCH, IncludeSearch, validate_include_search
+from ._selectors import select_json_pointer
 from ._streams import read_bounded
 from ._unset import UNSET, UnsetType
 from ._yaml_loader import configured_include_loader, ordinary_loader, validate_yaml_loader
@@ -73,9 +79,11 @@ from .tags import (
 
 __all__ = (
     "DEFAULT_INCLUDE_LIMITS",
+    "DEFAULT_JSONPATH_LIMITS",
     "IncludeLimits",
     "IncludeLoader",
     "IncludeRouteFrame",
+    "JsonPathLimits",
     "YamlConfigLoader",
     "YamlDirective",
     "YamlIncludeError",
@@ -112,112 +120,14 @@ class _StreamIdentity(NamedTuple):
     display_name: str
 
 
-class IncludeRouteFrame(NamedTuple):
-    """One YAML include site on the route to a failed included source.
-
-    Lines and columns are one-based. ``resolved_source`` is ``None`` when
-    resolution failed before a canonical source identity was available.
-    """
-
-    including_source: str
-    line: int
-    column: int
-    tag: str
-    requested_path: str | None
-    resolved_source: str | None
-
-
-def _render_include_route(route: tuple[IncludeRouteFrame, ...]) -> str:
-    """Render a route once, from the root document toward the failure."""
-    lines = ["Include route (outermost first):"]
-    for frame in route:
-        requested = repr(frame.requested_path) if frame.requested_path is not None else "<invalid path>"
-        destination = f" -> {frame.resolved_source}" if frame.resolved_source is not None else ""
-        lines.append(f"  {frame.including_source}:{frame.line}:{frame.column} {frame.tag} {requested}{destination}")
-    return "\n".join(lines)
-
-
-def _is_route_prefix(
-    prefix: tuple[IncludeRouteFrame, ...],
-    route: tuple[IncludeRouteFrame, ...],
-) -> bool:
-    return len(prefix) <= len(route) and route[: len(prefix)] == prefix
-
-
-def get_include_route(error: BaseException) -> tuple[IncludeRouteFrame, ...]:
-    """Return the typed route attached to an include-related YAML error.
-
-    Non-include errors and errors raised by custom YAML exception subclasses
-    that cannot store attributes return an empty tuple; their rendered message
-    still includes the route when available.
-    """
-    route_value: object = getattr(error, "include_route", ())
-    route_candidates = cast(tuple[object, ...], route_value) if isinstance(route_value, tuple) else ()
-    if all(isinstance(frame, IncludeRouteFrame) for frame in route_candidates):
-        return cast(tuple[IncludeRouteFrame, ...], route_candidates)
-    return ()
-
-
-def _attach_include_route(
-    error: yaml.YAMLError,
-    route: tuple[IncludeRouteFrame, ...],
-) -> None:
-    """Attach structured route data without replacing the original YAML error."""
-    if not route:
-        return
-
-    previous = get_include_route(error)
-    if previous:
-        if _is_route_prefix(previous, route):
-            selected = route
-        elif _is_route_prefix(route, previous):
-            selected = previous
-        elif len(previous) == len(route) and all(
-            (old.including_source, old.line, old.column, old.tag, old.requested_path)
-            == (new.including_source, new.line, new.column, new.tag, new.requested_path)
-            for old, new in zip(previous, route, strict=True)
-        ):
-            selected = tuple(
-                old if old.resolved_source is not None else new for old, new in zip(previous, route, strict=True)
-            )
-        else:
-            selected = route
-    else:
-        selected = route
-
-    if selected == previous:
-        return
-
-    error_state_value: object = getattr(error, "__dict__", None)
-    error_state = cast(dict[str, object], error_state_value) if isinstance(error_state_value, dict) else None
-    base_message: object = error_state.get("_yaml_compose_base_message") if error_state is not None else None
-    if not isinstance(base_message, str):
-        if isinstance(error, MarkedYAMLError):
-            base_message = error.problem or error.context or str(error)
-        else:
-            base_message = str(error)
-        if error_state is not None:
-            error_state["_yaml_compose_base_message"] = base_message
-    if error_state is None and "Include route (outermost first):" in base_message:
-        return
-
-    rendered = f"{base_message}\n{_render_include_route(selected)}"
-    if isinstance(error, MarkedYAMLError):
-        # Keep the original PyYAML class and marks so existing exception
-        # handlers and source-location inspection continue to work.
-        error.problem = rendered
-    else:
-        error.args = (rendered,)
-    if error_state is not None:
-        error_state["include_route"] = selected
-
-
 @dataclass(slots=True)
 class _IncludeBudget:
     max_include_depth: int | None
     max_include_files: int | None
     max_file_bytes: int | None
     max_total_include_bytes: int | None
+    max_glob_steps: int | None = 100_000
+    glob_steps: int = 0
     include_files: int = 0
     include_bytes: int = 0
     current_depth: int = 0
@@ -384,24 +294,6 @@ def _construct_object(loader: SafeLoader, node: Node, *, deep: bool = True) -> o
     return construct(node, deep)
 
 
-def _include_error(
-    node: Node,
-    message: str,
-    cause: Exception | None = None,
-    *,
-    tag: str = INCLUDE_TAG,
-) -> NoReturn:
-    error = ConstructorError(
-        f"while resolving {tag}",
-        None,
-        message,
-        node.start_mark,
-    )
-    if cause is not None:
-        raise error from cause
-    raise error
-
-
 class IncludeLoader(SafeLoader):
     """Construct bounded includes, shallow or deep mapping merges, and list spreads.
 
@@ -426,7 +318,8 @@ class IncludeLoader(SafeLoader):
         source: IncludeSource | None = None,
         yaml_loader: type[object] = SafeLoader,
         format_registry: FormatRegistry | None = None,
-        include_search: IncludeSearch = "local-first",
+        jsonpath_limits: JsonPathLimits = DEFAULT_JSONPATH_LIMITS,
+        include_search: IncludeSearch = DEFAULT_INCLUDE_SEARCH,
         allow_absolute_includes: bool = True,
         include_route: tuple[IncludeRouteFrame, ...] = (),
     ) -> None:
@@ -439,6 +332,11 @@ class IncludeLoader(SafeLoader):
         self.load_stack = tuple(load_stack)
         self.budget = budget
         self.yaml_loader = yaml_loader
+        # IncludeLimits is the shared source-read/traversal budget. JSONPath
+        # additionally bounds each query over the completed value and its output.
+        if type(jsonpath_limits) is not JsonPathLimits:
+            raise TypeError("jsonpath_limits must be a JsonPathLimits profile")
+        self.jsonpath_limits = jsonpath_limits
         self.format_registry = (format_registry if format_registry is not None else FormatRegistry()).snapshot()
         self.include_search: IncludeSearch = validate_include_search(include_search)
         self.allow_absolute_includes = bool(allow_absolute_includes)
@@ -449,6 +347,10 @@ class IncludeLoader(SafeLoader):
 
     @staticmethod
     def _construct_include(loader: IncludeLoader, node: Node) -> object:
+        if isinstance(node, MappingNode) and any(
+            isinstance(key, ScalarNode) and key.value == "sources" for key, _ in node.value
+        ):
+            return construct_include_many(loader, node)
         return loader._include(node)
 
     @staticmethod
@@ -545,6 +447,11 @@ class IncludeLoader(SafeLoader):
             stream_name = getattr(self, "name", None)
             including_source = stream_name if isinstance(stream_name, str) else "<yaml stream>"
         requested_path = node.value if isinstance(node, ScalarNode) else None
+        if isinstance(node, MappingNode):
+            for key, value in node.value:
+                if isinstance(key, ScalarNode) and key.value == "path" and isinstance(value, ScalarNode):
+                    requested_path = value.value
+                    break
         return IncludeRouteFrame(
             including_source=including_source,
             line=node.start_mark.line + 1,
@@ -559,8 +466,41 @@ class IncludeLoader(SafeLoader):
         node: Node,
         value: object,
         route: tuple[IncludeRouteFrame, ...],
+        *,
+        spec: IncludeSpec,
     ) -> object:
-        """Keep the originating include route for immediate YAML composition errors."""
+        """Select a value before composition and keep its originating include route."""
+        if spec.json_pointer is not None or spec.json_path is not None:
+            frame = route[-1]
+            selector = spec.json_pointer if spec.json_pointer is not None else spec.json_path
+            try:
+                if spec.json_pointer is not None:
+                    value = select_json_pointer(value, spec.json_pointer)
+                elif spec.json_path is not None:
+                    value = select_jsonpath(value, spec.json_path, self.jsonpath_limits)
+            except (ValueError, TypeError, RuntimeError) as exc:
+                detail = str(exc)
+                if (
+                    spec.json_path is not None
+                    and isinstance(exc, ValueError)
+                    and detail.startswith(
+                        (
+                            "JSONPath maximum ",
+                            "JSONPath execution timeout (",
+                            "JSONPath worker failed: ValueError: maximum ",
+                        )
+                    )
+                ):
+                    detail += (
+                        "; for larger trusted inputs configure jsonpath_limits=JsonPathLimits.generous(); "
+                        "see docs/jsonpath.md"
+                    )
+                _include_error(
+                    node,
+                    f"cannot select {selector!r} from include {frame.requested_path!r}: {detail}",
+                    exc,
+                    tag=frame.tag,
+                )
         self._include_routes_by_node[node] = route
         return value
 
@@ -597,24 +537,31 @@ class IncludeLoader(SafeLoader):
         node: Node,
         *,
         tag: str,
-    ) -> tuple[ResolvedInclude, IncludeSource, str, IncludeRouteFrame]:
+        provided_spec: IncludeSpec | None = None,
+        resolved_override: ResolvedInclude | None = None,
+    ) -> tuple[ResolvedInclude, IncludeSource, str, IncludeRouteFrame, IncludeSpec]:
         """Resolve and validate one include source under the current loader context."""
         frame = self._route_frame(node, tag=tag)
         route = (*self.include_route, frame)
         try:
-            if not isinstance(node, ScalarNode):
-                _include_error(node, f"{tag} expects a scalar path", tag=tag)
-            name = self.construct_scalar(node)
-            if not name:
-                _include_error(node, f"{tag} expects a non-empty path", tag=tag)
             try:
+                if provided_spec is not None:
+                    spec = provided_spec
+                elif isinstance(node, ScalarNode):
+                    name = self.construct_scalar(node)
+                    if not name:
+                        raise ValueError(f"{tag} expects a non-empty path")
+                    spec = IncludeSpec(name)
+                else:
+                    spec = parse_include_spec(node, tag=tag)
+                name = spec.path
                 validate_include_name(name, allow_absolute=self.allow_absolute_includes)
             except ValueError as exc:
                 _include_error(node, str(exc), exc, tag=tag)
             if not self.allowed_roots:
                 _include_error(node, f"{tag} requires at least one allowed root", tag=tag)
             try:
-                resolved = self.include_resolver.resolve(
+                resolved = resolved_override or self.include_resolver.resolve(
                     IncludeRequest(
                         name=name,
                         including=self.source,
@@ -656,7 +603,7 @@ class IncludeLoader(SafeLoader):
                     tag=tag,
                 )
 
-            return resolved, include_source, source_label, frame
+            return resolved, include_source, source_label, frame, spec
         except yaml.YAMLError as exc:
             _attach_include_route(exc, route)
             raise
@@ -713,22 +660,29 @@ class IncludeLoader(SafeLoader):
             _include_error(node, f"cannot read include source {source_label}: {exc}", exc, tag=tag)
 
     def _include_text(self, node: Node) -> str:
-        """Include a bounded source as exact, strictly decoded UTF-8 text."""
+        """Include bounded, strictly decoded text with an optional physical line range."""
+        encoding = "utf-8"
         frame = self._route_frame(node, tag=INCLUDE_TEXT_TAG)
         route = (*self.include_route, frame)
         try:
-            resolved, _include_source, source_label, frame = self._resolve_include_source(
+            resolved, _include_source, source_label, frame, spec = self._resolve_include_source(
                 node,
                 tag=INCLUDE_TEXT_TAG,
             )
             route = (*self.include_route, frame)
             content = self._read_include_source(node, resolved, source_label, tag=INCLUDE_TEXT_TAG)
-            return cast(str, self._remember_include_result(node, content.decode("utf-8"), route))
-        except UnicodeDecodeError as exc:
+            encoding = spec.encoding
+            text = content.decode(encoding)
+            if spec.select_lines:
+                with StringIO(text, newline="") as stream:
+                    text = "".join(stream.readlines()[spec.line_start - 1 : spec.line_end])
+            return cast(str, self._remember_include_result(node, text, route, spec=spec))
+        except (UnicodeError, LookupError, TypeError) as exc:
             try:
                 _include_error(
                     node,
-                    f"include source {frame.resolved_source or frame.requested_path or '<unknown>'} is not UTF-8 text",
+                    f"include source {frame.resolved_source or frame.requested_path or '<unknown>'} is not "
+                    f"{('UTF-8' if encoding == 'utf-8' else encoding)} text",
                     exc,
                     tag=INCLUDE_TEXT_TAG,
                 )
@@ -744,28 +698,52 @@ class IncludeLoader(SafeLoader):
         frame = self._route_frame(node, tag=INCLUDE_RAW_TAG)
         route = (*self.include_route, frame)
         try:
-            resolved, _include_source, source_label, frame = self._resolve_include_source(node, tag=INCLUDE_RAW_TAG)
+            resolved, _include_source, source_label, frame, spec = self._resolve_include_source(
+                node, tag=INCLUDE_RAW_TAG
+            )
             route = (*self.include_route, frame)
             content = self._read_include_source(node, resolved, source_label, tag=INCLUDE_RAW_TAG)
-            return cast(bytes, self._remember_include_result(node, content, route))
+            end = None if spec.length is None else spec.offset + spec.length
+            content = content[spec.offset : end]
+            return cast(bytes, self._remember_include_result(node, content, route, spec=spec))
         except yaml.YAMLError as exc:
             _attach_include_route(exc, route)
             raise
 
-    def _include(self, node: Node, *, table: bool = False) -> object:
-        """Load a structured include, or an explicitly marked CSV table."""
-        tag = INCLUDE_TABLE_TAG if table else INCLUDE_TAG
+    def _include(
+        self,
+        node: Node,
+        *,
+        table: bool = False,
+        tag_override: str | None = None,
+        provided_spec: IncludeSpec | None = None,
+        resolved_override: ResolvedInclude | None = None,
+    ) -> object:
+        """Load a structured value, all YAML documents, or an explicit table."""
+        tag = tag_override or (INCLUDE_TABLE_TAG if table else INCLUDE_TAG)
         frame = self._route_frame(node, tag=tag)
         route = (*self.include_route, frame)
         try:
-            resolved, include_source, source_label, frame = self._resolve_include_source(node, tag=tag)
+            resolved, include_source, source_label, frame, spec = self._resolve_include_source(
+                node,
+                tag=tag,
+                provided_spec=provided_spec,
+                resolved_override=resolved_override,
+            )
             route = (*self.include_route, frame)
+            all_documents = spec.all_documents
             try:
                 selection = self.format_registry.select_format(include_source, format_id=resolved.format_id)
             except UnknownFormatError as exc:
                 _include_error(node, str(exc), exc, tag=tag)
             descriptor = selection.descriptor
             adapter = selection.adapter
+            if all_documents and adapter is not None:
+                _include_error(
+                    node,
+                    f"documents: all requires a YAML source; resolved as {descriptor.format_id!r}",
+                    tag=tag,
+                )
             if table:
                 if descriptor.capability != "table" or adapter is None:
                     _include_error(
@@ -796,12 +774,14 @@ class IncludeLoader(SafeLoader):
                             tag=tag,
                         ),
                         route,
+                        spec=spec,
                     )
                 try:
                     return self._remember_include_result(
                         node,
                         cast(FormatAdapter, adapter).parse(format_input),
                         route,
+                        spec=spec,
                     )
                 except FormatDependencyError as exc:
                     _include_error(
@@ -844,15 +824,30 @@ class IncludeLoader(SafeLoader):
                             include_resolver=self.include_resolver,
                             yaml_loader=self.yaml_loader,
                             format_registry=self.format_registry,
+                            jsonpath_limits=self.jsonpath_limits,
                             include_search=self.include_search,
                             allow_absolute_includes=self.allow_absolute_includes,
                             include_route=route,
+                            all_documents=all_documents,
                         ),
                         route,
+                        spec=spec,
                     )
                 finally:
                     self.budget.current_depth -= 1
             ordinary_text, _ = _strip_loader_directive(text)
+            if all_documents:
+                return self._remember_include_result(
+                    node,
+                    list(
+                        yaml.load_all(
+                            _NamedStringIO(ordinary_text, source_label),
+                            Loader=cast(type[SafeLoader], ordinary_loader(self.yaml_loader)),
+                        )
+                    ),
+                    route,
+                    spec=spec,
+                )
             return self._remember_include_result(
                 node,
                 yaml.load(
@@ -860,6 +855,7 @@ class IncludeLoader(SafeLoader):
                     Loader=cast(type[SafeLoader], ordinary_loader(self.yaml_loader)),
                 ),
                 route,
+                spec=spec,
             )
         except yaml.YAMLError as exc:
             _attach_include_route(exc, route)
@@ -1045,34 +1041,16 @@ class IncludeLoader(SafeLoader):
         )
 
 
-IncludeLoader.add_constructor(
-    INCLUDE_TAG,
-    IncludeLoader._construct_include,  # pyright: ignore[reportPrivateUsage]
-)
-IncludeLoader.add_constructor(
-    INCLUDE_TABLE_TAG,
-    IncludeLoader._construct_include_table,  # pyright: ignore[reportPrivateUsage]
-)
-IncludeLoader.add_constructor(
-    INCLUDE_RAW_TAG,
-    IncludeLoader._construct_include_raw,  # pyright: ignore[reportPrivateUsage]
-)
-IncludeLoader.add_constructor(
-    INCLUDE_TEXT_TAG,
-    IncludeLoader._construct_include_text,  # pyright: ignore[reportPrivateUsage]
-)
-IncludeLoader.add_constructor(
-    DELETE_TAG,
-    IncludeLoader._construct_delete,  # pyright: ignore[reportPrivateUsage]
-)
-IncludeLoader.add_constructor(
-    SPREAD_TAG,
-    IncludeLoader._construct_spread,  # pyright: ignore[reportPrivateUsage]
-)
-IncludeLoader.add_constructor(
-    REPLACE_TAG,
-    IncludeLoader._construct_replace,  # pyright: ignore[reportPrivateUsage]
-)
+for _tag, _constructor in (
+    (INCLUDE_TAG, IncludeLoader._construct_include),  # pyright: ignore[reportPrivateUsage]
+    (INCLUDE_TABLE_TAG, IncludeLoader._construct_include_table),  # pyright: ignore[reportPrivateUsage]
+    (INCLUDE_RAW_TAG, IncludeLoader._construct_include_raw),  # pyright: ignore[reportPrivateUsage]
+    (INCLUDE_TEXT_TAG, IncludeLoader._construct_include_text),  # pyright: ignore[reportPrivateUsage]
+    (DELETE_TAG, IncludeLoader._construct_delete),  # pyright: ignore[reportPrivateUsage]
+    (SPREAD_TAG, IncludeLoader._construct_spread),  # pyright: ignore[reportPrivateUsage]
+    (REPLACE_TAG, IncludeLoader._construct_replace),  # pyright: ignore[reportPrivateUsage]
+):
+    IncludeLoader.add_constructor(_tag, _constructor)
 
 
 def _canonical_source(source: IncludeSource) -> IncludeSource:
@@ -1097,9 +1075,11 @@ def _load_composed_text(
     include_resolver: IncludeResolver,
     yaml_loader: type[object],
     format_registry: FormatRegistry,
+    jsonpath_limits: JsonPathLimits = DEFAULT_JSONPATH_LIMITS,
     include_search: IncludeSearch,
     allow_absolute_includes: bool,
     include_route: tuple[IncludeRouteFrame, ...] = (),
+    all_documents: bool = False,
 ) -> object:
     """Parse text with include behavior using already normalized filesystem state."""
     loader = configured_include_loader(yaml_loader, IncludeLoader)(
@@ -1114,12 +1094,20 @@ def _load_composed_text(
         include_resolver=include_resolver,
         yaml_loader=yaml_loader,
         format_registry=format_registry,
+        jsonpath_limits=jsonpath_limits,
         include_search=include_search,
         allow_absolute_includes=allow_absolute_includes,
         include_route=include_route,
     )
     try:
-        result = loader.get_single_data()
+        if all_documents:
+            documents: list[object] = []
+            get_data = cast(Callable[[], object], loader.get_data)  # pyright: ignore[reportUnknownMemberType]
+            while loader.check_data():  # pyright: ignore[reportUnknownMemberType]
+                documents.append(get_data())
+            result = documents
+        else:
+            result = loader.get_single_data()
     except yaml.YAMLError as exc:
         _attach_include_route(exc, include_route)
         raise
@@ -1142,7 +1130,8 @@ def load_yaml_dispatch(
     allowed_roots: Iterable[str | os.PathLike[str] | IncludeRoot] | None = None,
     include_resolver: IncludeResolver | None = None,
     format_registry: None = None,
-    include_search: IncludeSearch = "local-first",
+    jsonpath_limits: JsonPathLimits = DEFAULT_JSONPATH_LIMITS,
+    include_search: IncludeSearch = DEFAULT_INCLUDE_SEARCH,
     allow_absolute_includes: bool = True,
     include_limits: IncludeLimits | UnsetType = UNSET,
     max_include_depth: int | UnsetType | None = UNSET,
@@ -1167,7 +1156,8 @@ def load_yaml_dispatch(
     include_resolver: IncludeResolver | None = None,
     yaml_loader: type[object] = SafeLoader,
     format_registry: FormatRegistry | None = None,
-    include_search: IncludeSearch = "local-first",
+    jsonpath_limits: JsonPathLimits = DEFAULT_JSONPATH_LIMITS,
+    include_search: IncludeSearch = DEFAULT_INCLUDE_SEARCH,
     allow_absolute_includes: bool = True,
     include_limits: IncludeLimits | UnsetType = UNSET,
     max_include_depth: int | UnsetType | None = UNSET,
@@ -1191,7 +1181,8 @@ def load_yaml_dispatch(
     include_resolver: IncludeResolver | None = None,
     yaml_loader: type[object] = SafeLoader,
     format_registry: FormatRegistry | None = None,
-    include_search: IncludeSearch = "local-first",
+    jsonpath_limits: JsonPathLimits = DEFAULT_JSONPATH_LIMITS,
+    include_search: IncludeSearch = DEFAULT_INCLUDE_SEARCH,
     allow_absolute_includes: bool = True,
     include_limits: IncludeLimits | UnsetType = UNSET,
     max_include_depth: int | UnsetType | None = UNSET,
@@ -1245,10 +1236,13 @@ def load_yaml_dispatch(
     active process-wide defaults. Explicit ``max_*`` values override
     only their matching profile fields, and ``None`` disables that bound. Each
     top-level call gets a fresh byte/count budget. Included YAML errors retain
-    source marks.
+    source marks. ``jsonpath_limits`` bounds each explicit ``json_path`` selection
+    separately and is inherited by nested includes.
     """
     validate_yaml_loader(yaml_loader)
     validate_include_search(include_search)
+    if type(jsonpath_limits) is not JsonPathLimits:
+        raise TypeError("jsonpath_limits must be a JsonPathLimits profile")
     limits = resolve_include_limits(
         max_include_depth,
         max_include_files,
@@ -1322,6 +1316,7 @@ def load_yaml_dispatch(
             max_include_files=limits.max_include_files,
             max_file_bytes=limits.max_file_bytes,
             max_total_include_bytes=limits.max_total_include_bytes,
+            max_glob_steps=limits.max_glob_steps,
             current_depth=max(0, seeded_depth),
         )
     else:
@@ -1340,6 +1335,7 @@ def load_yaml_dispatch(
         include_resolver=resolver,
         yaml_loader=yaml_loader,
         format_registry=formats,
+        jsonpath_limits=jsonpath_limits,
         include_search=include_search,
         allow_absolute_includes=allow_absolute_includes,
     )
@@ -1358,7 +1354,8 @@ def load_yaml_compose(
     allowed_roots: Iterable[str | os.PathLike[str] | IncludeRoot] | None = None,
     include_resolver: IncludeResolver | None = None,
     format_registry: None = None,
-    include_search: IncludeSearch = "local-first",
+    jsonpath_limits: JsonPathLimits = DEFAULT_JSONPATH_LIMITS,
+    include_search: IncludeSearch = DEFAULT_INCLUDE_SEARCH,
     allow_absolute_includes: bool = True,
     include_limits: IncludeLimits | UnsetType = UNSET,
     max_include_depth: int | UnsetType | None = UNSET,
@@ -1381,7 +1378,8 @@ def load_yaml_compose(
     include_resolver: IncludeResolver | None = None,
     yaml_loader: type[object] = SafeLoader,
     format_registry: FormatRegistry | None = None,
-    include_search: IncludeSearch = "local-first",
+    jsonpath_limits: JsonPathLimits = DEFAULT_JSONPATH_LIMITS,
+    include_search: IncludeSearch = DEFAULT_INCLUDE_SEARCH,
     allow_absolute_includes: bool = True,
     include_limits: IncludeLimits | UnsetType = UNSET,
     max_include_depth: int | UnsetType | None = UNSET,
@@ -1403,7 +1401,8 @@ def load_yaml_compose(
     include_resolver: IncludeResolver | None = None,
     yaml_loader: type[object] = SafeLoader,
     format_registry: FormatRegistry | None = None,
-    include_search: IncludeSearch = "local-first",
+    jsonpath_limits: JsonPathLimits = DEFAULT_JSONPATH_LIMITS,
+    include_search: IncludeSearch = DEFAULT_INCLUDE_SEARCH,
     allow_absolute_includes: bool = True,
     include_limits: IncludeLimits | UnsetType = UNSET,
     max_include_depth: int | UnsetType | None = UNSET,
@@ -1430,6 +1429,7 @@ def load_yaml_compose(
         include_resolver=include_resolver,
         yaml_loader=yaml_loader,
         format_registry=format_registry,
+        jsonpath_limits=jsonpath_limits,
         include_search=include_search,
         allow_absolute_includes=allow_absolute_includes,
         include_limits=include_limits,
@@ -1449,7 +1449,8 @@ def load_yaml_file(
     allowed_roots: Iterable[str | os.PathLike[str] | IncludeRoot] | None = None,
     include_resolver: IncludeResolver | None = None,
     format_registry: None = None,
-    include_search: IncludeSearch = "local-first",
+    jsonpath_limits: JsonPathLimits = DEFAULT_JSONPATH_LIMITS,
+    include_search: IncludeSearch = DEFAULT_INCLUDE_SEARCH,
     allow_absolute_includes: bool = True,
     recursive_dispatch: bool = True,
     include_limits: IncludeLimits | UnsetType = UNSET,
@@ -1470,7 +1471,8 @@ def load_yaml_file(
     include_resolver: IncludeResolver | None = None,
     yaml_loader: type[object] = SafeLoader,
     format_registry: FormatRegistry | None = None,
-    include_search: IncludeSearch = "local-first",
+    jsonpath_limits: JsonPathLimits = DEFAULT_JSONPATH_LIMITS,
+    include_search: IncludeSearch = DEFAULT_INCLUDE_SEARCH,
     allow_absolute_includes: bool = True,
     recursive_dispatch: bool = True,
     include_limits: IncludeLimits | UnsetType = UNSET,
@@ -1490,7 +1492,8 @@ def load_yaml_file(
     include_resolver: IncludeResolver | None = None,
     yaml_loader: type[object] = SafeLoader,
     format_registry: FormatRegistry | None = None,
-    include_search: IncludeSearch = "local-first",
+    jsonpath_limits: JsonPathLimits = DEFAULT_JSONPATH_LIMITS,
+    include_search: IncludeSearch = DEFAULT_INCLUDE_SEARCH,
     allow_absolute_includes: bool = True,
     recursive_dispatch: bool = True,
     include_limits: IncludeLimits | UnsetType = UNSET,
@@ -1529,6 +1532,7 @@ def load_yaml_file(
             include_resolver=include_resolver,
             yaml_loader=yaml_loader,
             format_registry=format_registry,
+            jsonpath_limits=jsonpath_limits,
             include_search=include_search,
             allow_absolute_includes=allow_absolute_includes,
             include_limits=include_limits,
@@ -1554,7 +1558,8 @@ class YamlConfigLoader(Generic[_LoaderValue_co]):
         *,
         include_resolver: IncludeResolver | None = None,
         format_registry: None = None,
-        include_search: IncludeSearch = "local-first",
+        jsonpath_limits: JsonPathLimits = DEFAULT_JSONPATH_LIMITS,
+        include_search: IncludeSearch = DEFAULT_INCLUDE_SEARCH,
         allow_absolute_includes: bool = True,
         search_paths: Iterable[str | os.PathLike[str] | IncludeRoot] | None = None,
         allowed_roots: Iterable[str | os.PathLike[str] | IncludeRoot] | None = None,
@@ -1573,7 +1578,8 @@ class YamlConfigLoader(Generic[_LoaderValue_co]):
         include_resolver: IncludeResolver | None = None,
         yaml_loader: type[object],
         format_registry: FormatRegistry | None = None,
-        include_search: IncludeSearch = "local-first",
+        jsonpath_limits: JsonPathLimits = DEFAULT_JSONPATH_LIMITS,
+        include_search: IncludeSearch = DEFAULT_INCLUDE_SEARCH,
         allow_absolute_includes: bool = True,
         search_paths: Iterable[str | os.PathLike[str] | IncludeRoot] | None = None,
         allowed_roots: Iterable[str | os.PathLike[str] | IncludeRoot] | None = None,
@@ -1592,7 +1598,8 @@ class YamlConfigLoader(Generic[_LoaderValue_co]):
         include_resolver: IncludeResolver | None = None,
         yaml_loader: type[object] = SafeLoader,
         format_registry: FormatRegistry,
-        include_search: IncludeSearch = "local-first",
+        jsonpath_limits: JsonPathLimits = DEFAULT_JSONPATH_LIMITS,
+        include_search: IncludeSearch = DEFAULT_INCLUDE_SEARCH,
         allow_absolute_includes: bool = True,
         search_paths: Iterable[str | os.PathLike[str] | IncludeRoot] | None = None,
         allowed_roots: Iterable[str | os.PathLike[str] | IncludeRoot] | None = None,
@@ -1610,7 +1617,8 @@ class YamlConfigLoader(Generic[_LoaderValue_co]):
         include_resolver: IncludeResolver | None = None,
         yaml_loader: type[object] = SafeLoader,
         format_registry: FormatRegistry | None = None,
-        include_search: IncludeSearch = "local-first",
+        jsonpath_limits: JsonPathLimits = DEFAULT_JSONPATH_LIMITS,
+        include_search: IncludeSearch = DEFAULT_INCLUDE_SEARCH,
         allow_absolute_includes: bool = True,
         search_paths: Iterable[str | os.PathLike[str] | IncludeRoot] | None = None,
         allowed_roots: Iterable[str | os.PathLike[str] | IncludeRoot] | None = None,
@@ -1630,7 +1638,8 @@ class YamlConfigLoader(Generic[_LoaderValue_co]):
         include_resolver: IncludeResolver | None = None,
         yaml_loader: type[object] = SafeLoader,
         format_registry: FormatRegistry | None = None,
-        include_search: IncludeSearch = "local-first",
+        jsonpath_limits: JsonPathLimits = DEFAULT_JSONPATH_LIMITS,
+        include_search: IncludeSearch = DEFAULT_INCLUDE_SEARCH,
         allow_absolute_includes: bool = True,
         search_paths: Iterable[str | os.PathLike[str] | IncludeRoot] | None = None,
         allowed_roots: Iterable[str | os.PathLike[str] | IncludeRoot] | None = None,
@@ -1664,11 +1673,15 @@ class YamlConfigLoader(Generic[_LoaderValue_co]):
         calls. The default registry contains YAML, JSON-family, TOML, CSV, INI,
         and dotenv adapters. CSV is selected with ``!include-table``. The
         ``!include-text`` and ``!include-raw`` tags use the same resolver and
-        budgets without parsing the selected source format.
+        budgets without parsing the selected source format. ``jsonpath_limits`` supplies
+        an immutable per-selection policy for ``!include`` JSONPath selection.
         """
         validate_yaml_loader(yaml_loader)
         self.include_resolver = include_resolver
         self.yaml_loader = yaml_loader
+        if type(jsonpath_limits) is not JsonPathLimits:
+            raise TypeError("jsonpath_limits must be a JsonPathLimits profile")
+        self.jsonpath_limits = jsonpath_limits
         self.format_registry = (format_registry if format_registry is not None else FormatRegistry()).snapshot()
         self.include_search: IncludeSearch = validate_include_search(include_search)
         self.allow_absolute_includes = bool(allow_absolute_includes)
@@ -1734,6 +1747,7 @@ class YamlConfigLoader(Generic[_LoaderValue_co]):
             include_resolver=self.include_resolver,
             yaml_loader=self.yaml_loader,
             format_registry=self.format_registry,
+            jsonpath_limits=self.jsonpath_limits,
             include_search=self.include_search,
             allow_absolute_includes=self.allow_absolute_includes,
             recursive_dispatch=self.recursive_dispatch,
@@ -1784,6 +1798,7 @@ class YamlConfigLoader(Generic[_LoaderValue_co]):
             include_resolver=self.include_resolver,
             yaml_loader=self.yaml_loader,
             format_registry=self.format_registry,
+            jsonpath_limits=self.jsonpath_limits,
             include_search=self.include_search,
             allow_absolute_includes=self.allow_absolute_includes,
             include_limits=self.include_limits,
@@ -1828,6 +1843,7 @@ class YamlConfigLoader(Generic[_LoaderValue_co]):
             include_resolver=self.include_resolver,
             yaml_loader=self.yaml_loader,
             format_registry=self.format_registry,
+            jsonpath_limits=self.jsonpath_limits,
             include_search=self.include_search,
             allow_absolute_includes=self.allow_absolute_includes,
             include_limits=self.include_limits,

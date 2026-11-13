@@ -1,0 +1,26 @@
+%LOADER YamlCompose
+---
+# Pointer selects one value; JSONPath always returns a list of matches.
+pointer: !include {path: './catalog#blue.json', json_pointer: /items/0/name}
+names: !include {path: './catalog#blue.json', json_path: '$.items[*].name'}
+no_matches: !include {path: './catalog#blue.json', json_path: '$.items[?@.enabled == false].name'}
+# Select per file, then collect; explicit paths keep order and each glob sorts.
+settings: !include
+  sources: [./base.yaml, ./local.yaml, {glob: './sites/*.yaml'}]
+  json_pointer: /settings
+# Multi-document mode always creates a document list, even for one document.
+one_document: !include {path: ./base.yaml, documents: all}
+second_document: !include {path: ./events.yaml, documents: all, json_pointer: /1/event}
+recent_documents: !include {path: ./events.yaml, documents: all, json_path: '$[-1:]'}
+whole_stream: !include {path: ./events.yaml, documents: all, json_path: '$'}
+per_file_streams: !include
+  sources: [./events.yaml, ./events.yaml]
+  documents: all
+  json_path: '$[-1:]'
+# Physical lines are one-based, inclusive; byte offsets are zero-based.
+text_from_second: !include-text {path: ./notes.txt, lines: {start: 2}}
+text_through_second: !include-text {path: ./notes.txt, lines: {end: 2}}
+raw_after_two: !include-raw {path: ./payload.txt, offset: 2}
+raw_first_two: !include-raw {path: ./payload.txt, length: 2}
+# No header inference, skipped rows, or cell coercion: the first row stays.
+table: !include-table {path: ./people.csv}

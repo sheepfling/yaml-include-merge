@@ -26,6 +26,54 @@ includes, deep overrides, deletion, and list spreading. The standalone
 Their exact outputs and the README's labeled YAML sources are checked in
 `tests/test_examples.py`.
 
+## Select values with object options
+
+The complete [selection showcase](../examples/include_selection/main.yaml) includes
+[all input files](../examples/include_selection/). From a checkout containing this feature, install and run:
+
+```shell
+python -m pip install .
+python examples/include_selection.py
+```
+
+These object options require a version containing structured include selection; older releases
+cannot load them. Scalar filenames keep their existing literal-path behavior.
+The [runner](../examples/include_selection.py) finds its fixtures relative to its own
+file, so it also works when launched by absolute path from another directory.
+
+The showcase contrasts Pointer's single value with JSONPath's list of matches. It combines
+two literal files with a sorted glob, applies selection **per file**, and demonstrates
+multi-document stream indexing and slicing. `whole_stream` uses `$`, which returns the entire
+document list as one match; `per_file_streams` retains one match list per source without flattening.
+`one_document` retains its list wrapper. The `#` in the JSON filename is literal, not a selector.
+
+Text ranges demonstrate start-only and end-only bounds, with preserved newline characters.
+Raw ranges demonstrate offset-only and length-only bounds. Table object options accept only
+`path`: the first row is retained, and the value `02` stays a string. No header inference or
+row skipping is implied. The Python result is printed rather than forced into JSON so bytes
+remain visibly distinct from text:
+
+```python
+{'pointer': 'api',
+ 'names': ['api', 'worker'],
+ 'no_matches': [],
+ 'settings': [{'name': 'base'}, {'name': 'local'}, {'name': 'east'}, {'name': 'west'}],
+ 'one_document': [{'settings': {'name': 'base'}}],
+ 'second_document': 'finished',
+ 'recent_documents': [{'event': 'finished'}],
+ 'whole_stream': [[{'event': 'started'}, {'event': 'finished'}]],
+ 'per_file_streams': [[{'event': 'finished'}], [{'event': 'finished'}]],
+ 'text_from_second': 'second\nthird\n',
+ 'text_through_second': 'first\nsecond\n',
+ 'raw_after_two': b'CDEF',
+ 'raw_first_two': b'AB',
+ 'table': [['name', 'count'], ['Ada', '02']]}
+```
+
+[Exact-output and runner tests](../tests/test_selection_example.py) check this result and the
+documented output. See [include options](formats.md#include-options-and-selection) for bounds,
+errors, and supported fields, and [JSONPath](jsonpath.md) for queries and limits.
+
 ## Include a file as a value
 
 Use `!include` to load a document into one value without merging it into its

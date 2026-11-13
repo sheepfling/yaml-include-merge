@@ -32,6 +32,316 @@ standard JSON parser and deeply nested input may reach Python's recursion limit.
 [json5 0.17.3 package page](https://pypi.org/project/json5/0.17.3/) and its
 [maintainer documentation](https://github.com/dpranke/pyjson5/blob/main/README.md).
 
+## Include options and selection
+
+Every include tag accepts either a scalar literal path or an options mapping with a
+`path` string. `!include` additionally accepts a nonempty `sources` list instead of `path`.
+The scalar form is unchanged: `!include "config#blue%20.yaml"` opens that exact
+local name. It does not split `#`, percent-decode names, or interpret URI references. The
+mapping form keeps the path and any selector separate:
+
+```yaml
+%LOADER YamlCompose
+---
+<<<: !include {path: defaults.yaml, json_pointer: /service}
+array: !include {path: hardware.yaml, json_pointer: /arrays/kbr}
+first_record: !include {path: records.jsonl, json_pointer: /0}
+steps: [prepare, !spread [!include {path: workflow.yaml, json_pointer: /steps}], finish]
+enabled: !include {path: catalog.json, json_path: '$.items[?@.enabled == true]'}
+```
+
+The supported fields are deliberately specific to each tag:
+
+| Tag              | Fields beyond the source                    |
+| ---------------- | ------------------------------------------- |
+| `!include`       | `documents`, `json_pointer` or `json_path`  |
+| `!include-table` | None                                        |
+| `!include-text`  | `encoding`, `lines: {start: ..., end: ...}` |
+| `!include-raw`   | `offset`, `length`                          |
+
+Options must be literal values of the documented types. Unknown fields, duplicate fields,
+wrong types, and both JSON selectors together are errors before opening the source. Include
+specifications do not evaluate custom tags or YAML merge expressions. Booleans are not
+accepted as integer offsets or line numbers. `path` must be a nonempty string in a mapping;
+`{path: filename}` is equivalent to the existing scalar path form under default construction.
+A trusted custom loader's `construct_scalar` override still applies to scalar references;
+mapping fields remain inert literals.
+
+The local path uses the existing resolver and host-platform path policy. Windows fully
+qualified drive and UNC paths remain subject to `allow_absolute_includes` and allowed roots;
+drive-relative paths are rejected. Bare scheme-like names such as `foo:bar.yaml` are rejected
+by existing path validation; a POSIX relative spelling such as `./foo:bar.yaml` is unambiguous.
+No URL loading, path decoding, filesystem-existence guessing, or new network behavior is added.
+Quote paths with YAML-significant characters; on Windows, single-quoted YAML strings preserve
+backslashes literally, for example `path: 'C:\configs\config#blue.yaml'`.
+
+### Select part of an include
+
+`json_pointer` uses the plain string form of [JSON Pointer (RFC 6901)](https://www.rfc-editor.org/rfc/rfc6901).
+The small built-in pointer evaluator needs no optional dependency. It selects from the
+completed included value before that value is inserted, merged, or spread into its parent document:
+
+- `""` selects the entire value, including a scalar or `null`. Omitting a selector also includes
+  the whole value. `/` selects the mapping key that is the empty string.
+- `/arrays/kbr` follows exact string mapping keys. Keys are not coerced: a YAML integer key
+  `1` is different from the string key `"1"`.
+- `/items/0` selects the first sequence element. Indexes are zero-based ASCII decimal integers,
+  without leading zeroes except `0` itself. Negative indexes, `-`, slices, wildcards, filters,
+  and out-of-range indexes are errors.
+- Escape a literal `/` in a key as `~1` and a literal `~` as `~0`. For example, `/a~1b/m~0n`
+  selects key `m~n` inside key `a/b`. Invalid `~` escapes are rejected.
+- This is not a URI fragment. Do not add a leading `#`. Spaces, Unicode, `#`, and percent signs
+  are literal characters in the pointer string. `/space%20key` selects the key `space%20key`,
+  while `/space key` selects `space key`. `/☃` selects `☃` without percent encoding.
+
+JSONL and NDJSON are lists of parsed records: `/2/name` selects the `name` member in the third
+record. Custom mapping values and list/tuple sequences follow the same rules. Other custom
+Python objects have no implicit attribute lookup. YAML aliases are followed
+through the constructed value; evaluation takes one step per pointer token, so a cyclic alias
+does not cause an unbounded walk. Existing restrictions on cyclic mapping overlays still apply.
+
+The selected value must satisfy the operation that consumes it. `<<<` and `<<` require mapping
+sources, and `!spread` requires a sequence. Selecting a scalar does not convert it to a mapping
+or sequence. Errors identify the include path, selector, and include-site mark; nested errors
+preserve the include route.
+
+The complete source is read, parsed, and validated before selection. Nested YAML includes and
+composition finish first. Unselected malformed data and nested include cycles still fail. All
+source bytes and nested reads count toward the existing limits, even when the result is small.
+Repeated includes count as separate reads as before. Resolvers receive only the literal path;
+their returned source identity still controls format dispatch, confinement, and cycle checks.
+
+Use the separate `json_path` option for explicit JSONPath queries. It uses the default-installed
+strict engine with an always-list result, JSON-compatible input requirements, and per-selection limits
+described below. These selectors are mutually exclusive and supported only on `!include`.
+See [JSONPath selection](jsonpath.md) for filters, slices, functions, and limits.
+
+### YAML document streams
+
+Use the object-only `documents: all` option on `!include` to read a YAML stream as a list of
+all its documents:
+
+```yaml
+%LOADER YamlCompose
+---
+documents: !include {path: bundle.yaml, documents: all}
+settings: !include {documents: all, path: bundle.yaml, json_pointer: /1/settings}
+recent: !include {documents: all, path: bundle.yaml, json_path: '$[-3:]'}
+steps: [prepare, !spread [!include {path: steps.yaml, documents: all}], finish]
+```
+
+Without a selector, the result is always a list. An empty or comment-only stream gives `[]`;
+a single mapping gives `[mapping]`; an explicit empty document gives `[null]`. Multiple `---`
+documents produce one list item per document, in order. A document that is itself a sequence
+stays nested: two sequence documents become `[sequence1, sequence2]`, never one flattened list.
+Empty documents are retained and count when indexing.
+
+The outer document list is deliberate, not a wrapper to discard for zero or one document.
+It makes whole-stream JSONPath slices possible: `$[1:3]` selects the second and third documents,
+`$[-2:]` selects the last two, and `$[::-1]` reverses document order. A sequence-valued document
+remains one item; `$[1:3]` does not slice the contents of those documents. `$` selects the whole
+document list as one match, whereas `$[:]` selects its individual documents.
+
+A selector applies once to this document list after the complete stream is parsed. JSON Pointer
+`/0` selects the first document, `/1/settings` selects `settings` in the second document, and
+`""` retains the whole list. Even if a selector chooses an early document, a syntax error,
+duplicate key, undefined alias, or failed include in a later document fails the whole include.
+The parser is eager: no lazy iterator or partially validated result escapes.
+
+Each document gets normal YAML composition and nested include behavior, with paths relative
+to the included stream's source. Anchors and aliases are local to each document: names may be
+reused in a later document, but an alias cannot reference an earlier document's anchor. The
+leading `%LOADER YamlCompose` header is optional in an included stream. With
+`recursive_dispatch=False`, all documents instead use the configured ordinary YAML loader and
+do not enable nested package tags. Custom constructors and duplicate-key checks apply in either mode.
+
+All documents share existing source and resource controls. The stream is one file read, its
+entire byte size counts against file/total-byte limits, and every nested include uses the same
+depth/count/byte budget. Cycle detection uses canonical source identity, not the document index
+or selector. There is no separate document-count limit. As with ordinary YAML, byte limits do
+not bound all parser CPU or expanded object memory.
+
+The resolver's selected format must be YAML. Registered non-YAML formats produce an explicit
+error with `documents: all`; unknown suffixes retain the YAML fallback. Resolver-provided
+`format_id="yaml"` works. JSONL and NDJSON already return record lists through `!include`.
+Scalar `!include` and mappings without `documents: all` remain single-document and reject multiple
+documents, even with a selector. `documents: single` explicitly requests the same default behavior.
+In single-document mode, `/0` selects a sequence element, not a stream document. This document-list model is explicit
+yaml-compose behavior, not the URI-fragment syntax defined by RFC 9512. Named-anchor fragments
+such as `#*name` are not supported.
+
+A pointer-selected mapping can be a `<<` or `<<<` source. An unselected document list or JSONPath
+result list cannot: there is no implicit stream merge. Select a mapping with JSON Pointer, or
+use an explicit YAML list of separately selected mapping sources. Existing merge precedence is
+unchanged. `!spread` inserts documents into an outer sequence, not the contents of sequence-valued documents.
+
+### Text lines and encoding
+
+`!include-text` defaults to strict UTF-8 decoding and returns the exact decoded string. Its
+mapping form can select a text encoding and an inclusive range of physical lines:
+
+```yaml
+notes: !include-text {path: notes.txt, lines: {start: 2, end: 4}}
+legacy: !include-text {path: legacy.txt, encoding: latin-1}
+tail: !include-text {path: notes.txt, lines: {start: 5}}
+```
+
+`encoding` must be a string naming a supported Python text codec. Decoding is strict: malformed
+input is an error, not replacement text. The complete source is decoded before line selection,
+so an encoding error in an unselected line still fails. No newline conversion is applied.
+
+`lines.start` defaults to 1; `lines.end` is optional. Both are positive integers, one-based and
+inclusive. An end before the start is an error. CR, LF, and CRLF delimit physical lines;
+original terminators are retained. A trailing terminator does not create another empty line.
+The end is clipped at EOF, and a start beyond EOF gives an empty string. Omitting `lines`
+returns the whole decoded text. `json_pointer` and `json_path` are not text-include options.
+
+### Raw byte ranges
+
+`!include-raw` returns exact bytes. Its mapping form can select a byte range:
+
+```yaml
+header: !include-raw {path: payload.bin, offset: 0, length: 16}
+remainder: !include-raw {path: payload.bin, offset: 16}
+```
+
+`offset` is zero-based and defaults to 0. `length` is optional; without it, all bytes from the
+offset to EOF are returned. Both are nonnegative integers. Zero length or an offset beyond EOF
+gives empty bytes; the end is clipped at EOF. No decoding occurs. JSON selectors, encodings,
+and line ranges are not raw-include options.
+
+Text and raw ranges are selections after a complete bounded read, not partial-file IO. The
+entire source counts toward file and total-byte limits, even for an empty selected range.
+All resolver/root/count/depth policies and stream cleanup still apply.
+
+## Collect several structured files
+
+`!include` accepts an explicit nonempty `sources` list for ordered paths and filesystem globs:
+
+```yaml
+%LOADER YamlCompose
+---
+configs: !include
+  sources:
+    - base.yaml
+    - {path: 'special#;%20.yaml'}
+    - {glob: 'profiles/*.yaml'}
+  json_pointer: /service
+```
+
+Supply exactly one of `path` or `sources`; neither may be empty. `sources` is a sequence of
+entries. Each entry is either a literal path string, `{path: literal_path}`, or an explicit
+`{glob: pattern}`. A string containing `*`, `?`, `[`, `#`, or `%` stays a literal path; only a
+`glob` entry expands patterns. Names are never interpreted as URI references or percent-decoded.
+Scalar `!include` remains one literal path. There is no implicit comma/semicolon-delimited path
+list. Empty `sources: []` is rejected.
+
+Optional top-level fields are `documents: single` (the default) or `documents: all`, and either
+`json_pointer` or `json_path`. Entries do not accept their own selectors or include-option
+objects. Unknown/duplicate fields, non-string paths, invalid document modes, YAML merge
+expressions, and tagged expressions in options are errors before source resolution.
+
+### Result shape and selection
+
+The output has one item per resolved file, in source order. `documents: single` loads each
+file as ordinary `!include`; `documents: all` loads each file as `!include {path: ..., documents: all}`, which requires
+YAML. CSV tables and raw/text-specific reads are not added to ordinary structured include
+semantics by using `sources`. A source array stays one nested array, a YAML stream stays one
+nested document list, and a JSONPath selection stays one nested nodelist. Nothing is flattened.
+
+Selection is applied independently to each **completed file result**, not to the outer result
+list and not separately to each document in `documents: all` mode:
+
+```yaml
+second_document_settings: !include
+  sources: [one.yaml, two.yaml]
+  documents: all
+  json_pointer: /1/settings
+
+all_names: !include
+  sources: [{glob: 'records/*.json'}]
+  json_path: '$.items[*].name'
+
+recent_documents_per_file: !include
+  sources: [one.yaml, two.yaml]
+  documents: all
+  json_path: '$[-2:]'
+```
+
+For the first example, `/1/settings` selects from the document list for each file. If either
+file lacks that path, the whole operation fails. JSONPath's zero/one/many matches remain a
+list for each file, including `[]` for a file with no matches. Both selectors retain their
+single-source validation rules and JSONPath's required engine and resource controls.
+
+The last example returns one list of up to two documents per file, not the last two files.
+The same `sources` request does not select across the outer file collection. Put that
+collection in a separate aggregate document and include the completed document with its
+own selector when an outer-file selection is needed.
+Per-document selector scope is not implicit: the document list remains the selection root
+in `documents: all` mode.
+
+A failure in any source fails the operation; no partial list escapes. Each source's full
+content is parsed before selection, including later YAML documents and nested includes.
+Nested paths resolve relative to that source's containing directory as usual. The aggregate
+list cannot be a `<<` or `<<<` mapping source. Use `!spread` if you explicitly want to insert
+its per-file results into another sequence; this still does not flatten an individual result.
+
+### Explicit glob semantics
+
+Globs use path-segment patterns: `*`, `?`, and bracket character classes. A complete `**`
+segment matches zero or more directories. Hidden names are included when the pattern matches
+them. Brace expansion, tilde expansion, and shell execution are not supported. An exact
+pattern such as `{glob: config.yaml}` is valid and matches zero or one file.
+
+Path entries retain their listed order. Each glob's matches are sorted by normalized path
+spelling in case-sensitive Unicode lexical order. Pattern matching itself follows native
+platform case normalization. Each spelling appears once within a single glob, including a
+recursive pattern with multiple ways to reach it. Repeating entries or using overlapping
+globs retains duplicate reads and duplicate results. Distinct symlink spellings are not
+collapsed merely because they resolve to the same file. A glob with no matching files is
+an error rather than an empty contribution.
+
+Bare patterns follow `include_search`. Each uses the first search location that produces
+matching files; results from different locations are not combined. Explicit `./` or `../`
+patterns require a containing filesystem source and do not fall back to search paths.
+Absolute patterns obey `allow_absolute_includes`. There is no working-directory fallback.
+As with ordinary paths, host-native separators apply; Windows drive/UNC spellings do not
+turn into Windows filesystem access when running on POSIX.
+
+Globbing is supported only with the built-in local filesystem resolver. Literal entries work
+with custom resolvers, but a glob does not silently fall back from a custom resolver to the
+filesystem. Globs do not fetch URLs or add any network-resolution capability.
+
+### Glob confinement and budgets
+
+The fixed non-wildcard directory prefix is canonicalized and must lie inside an allowed root
+before scanning starts. A broad pattern cannot start outside allowed roots and scan toward
+an allowed descendant. `..` in a fixed prefix is permitted only when the resulting prefix
+is confined; `..` after the first wildcard segment is rejected.
+
+Wildcard directory traversal does not follow directory symlinks. An explicitly named fixed
+symlink prefix may be used only when its canonical target is inside the allowed roots. A
+matched symlink file outside those roots is an error. Directory results are not included as
+file values. These rules avoid treating pattern expansion as a way around ordinary include
+confinement; they do not make concurrent filesystem mutations race-free.
+
+Every selected file, including duplicate reads, consumes the normal include-count and byte
+budgets. Nested includes share those budgets and retain depth/cycle checks. In addition,
+`IncludeLimits.max_glob_steps` defaults to `100_000` and bounds location setup, directory/pattern states, and
+directory entries examined across all globs in a top-level load, including nested expansions.
+An empty directory still consumes traversal work. Set the profile field to `0` to forbid glob
+work or `None` to leave traversal unbounded. Literal entries do not consume glob steps.
+This field is configured through `include_limits`, not a new per-call `max_glob_steps` argument:
+
+```python
+from yaml_compose import IncludeLimits, YamlConfigLoader
+
+loader = YamlConfigLoader(include_limits=IncludeLimits(max_glob_steps=10_000))
+```
+
+The traversal budget bounds expansion work, not elapsed time, file mutation, or total Python
+memory. Resource-limit failures are errors and never return a truncated list of matches.
+
 ## JSON Lines and NDJSON records
 
 Both record formats require UTF-8 without a BOM and parse one strict JSON value per LF-delimited

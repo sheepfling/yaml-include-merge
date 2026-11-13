@@ -4,6 +4,15 @@ The top-level [README](../README.md) introduces the composition semantics. This 
 links the runnable example files to the tests that check their results. Run
 `python examples/load_config.py` to print the quickstart values as JSON.
 
+## Object-form selection showcase
+
+[include_selection.py](include_selection.py) runs the complete
+[input configuration](include_selection/main.yaml) and its checked-in fixtures. It demonstrates
+Pointer, JSONPath, source/glob collections, multi-document result shapes, text ranges, raw byte
+ranges, and table object options. [The worked guide](../docs/examples.md#select-values-with-object-options)
+shows the exact output, checked by [tests](../tests/test_selection_example.py).
+Install from a checkout containing this feature with `python -m pip install .`; older published versions lack these options.
+
 ## Simple README examples
 
 - [quickstart/production.yaml](quickstart/production.yaml) combines deep
@@ -79,6 +88,7 @@ From the repository root after installing the package:
 
 ```shell
 python examples/load_config.py
+python examples/include_selection.py
 python examples/include_formats.py
 python examples/include_records.py
 python examples/include_csv.py

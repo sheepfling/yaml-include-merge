@@ -13,6 +13,7 @@ maintainers = [{name = "sheepfling"}]
 requires-python = ">=3.10"
 dependencies = [
     "PyYAML>=6.0,<7",
+    "python-jsonpath[strict]>=2.0,<3",
     "tomli>=2; python_version < '3.11'",
     "typing_extensions>=4.6; python_version < '3.13'",
 ]

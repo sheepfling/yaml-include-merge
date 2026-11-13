@@ -74,6 +74,20 @@ See [worked examples](docs/examples.md) for merge precedence, nested includes, s
 replacement, deletion, and list behavior. The [design notes](docs/design-notes.md) explain
 how the composition rules relate to YAML and PyYAML.
 
+## Select with JSONPath
+
+For filters, wildcards, slices, and multiple results, the default installation includes JSONPath. Use
+an explicit value selector:
+
+```yaml
+enabled: !include {path: catalog.json, json_path: '$.items[?@.enabled == true]'}
+```
+
+`json_path` always returns a list, even with zero or one match. JSONPath and JSON Pointer
+are mutually exclusive options on `!include`, separate from the literal path. See
+[JSONPath selection](docs/jsonpath.md) for strict syntax, supported values, resource limits,
+dependency and subprocess requirements.
+
 ## Include other files
 
 Use `!include` for structured data. The resolved filename selects the parser; YAML remains
@@ -83,7 +97,7 @@ the composition layer, so included mappings can participate in the same merge op
 | ---------------- | ------------------------------------ | ----------------------------------- |
 | `!include`       | YAML, JSON-family, TOML, INI, dotenv | Native Python value                 |
 | `!include-table` | CSV or registered table adapter      | Rows of strings; first row included |
-| `!include-text`  | UTF-8 text                           | Exact decoded string                |
+| `!include-text`  | Text (UTF-8 by default)              | Exact decoded string                |
 | `!include-raw`   | Any file                             | Exact bytes                         |
 
 JSON5 is optional; install `yaml-compose[json5]` to use it. JSON Lines and NDJSON produce
@@ -93,10 +107,56 @@ cell values. Custom table adapters, such as a caller-supplied TSV parser, can al
 `date`, `time`, or `datetime` objects.
 Raw includes return bytes, which need explicit conversion before JSON serialization.
 
+Every single-source tag also accepts an options mapping with a literal `path`. Select part of a structured
+include with plain JSON Pointer, for example:
+
+```yaml
+array: !include {path: hardware.yaml, json_pointer: /arrays/kbr}
+<<<: !include {path: defaults.yaml, json_pointer: /service}
+notes: !include-text {path: notes.txt, lines: {start: 2, end: 4}}
+header: !include-raw {path: payload.bin, offset: 0, length: 16}
+```
+
+Scalar paths stay literal, including `#` and `%`: `!include "config#blue.yaml"` names that file.
+Paths and selectors are never split or percent-decoded. JSON Pointer uses `~0` and `~1` escapes,
+not a leading `#`. Selection happens after complete reading/parsing and before composition;
+missing pointer paths are errors, and resource limits still cover the whole source. See
+[include options and selection](docs/formats.md#include-options-and-selection) for every tag's fields.
+
 For parser details and the format adapter API, see the [included formats guide](docs/formats.md).
 The [worked format examples](docs/examples.md#include-json-and-toml-sources) cover JSON,
 TOML, JSONC, JSON5, JSON Lines, NDJSON, and CSV. See the [INI, dotenv, and text examples](docs/examples.md#ini-dotenv-and-text-includes)
 for string, text, and raw includes.
+
+Use `!include {path: bundle.yaml, documents: all}` to include every document in a YAML stream as a list.
+The result is always a document list, even for an empty source or a single document.
+`!include {documents: all, path: bundle.yaml, json_pointer: /1/settings}` selects `settings` from the second document.
+`!include {documents: all, path: bundle.yaml, json_path: '$[1:3]'}` selects the second and third documents.
+The document-list root is retained even for a single document, so indexing and slicing stay consistent.
+Scalar `!include` and the default `documents: single` keep single-document behavior.
+See [YAML streams](docs/formats.md#yaml-document-streams).
+
+For a complete runnable example with source files and exact expected output, see the
+[object-form selection showcase](docs/examples.md#select-values-with-object-options).
+
+## Collect several files
+
+Use `!include` with a nonempty `sources` list for ordered structured sources. Supply exactly
+one of `path` or `sources`. Patterns expand
+only in explicit `glob` entries; ordinary strings and `path` entries remain literal:
+
+```yaml
+configs: !include
+  sources: [base.yaml, {path: 'special#blue.yaml'}, {glob: 'profiles/*.yaml'}]
+  json_pointer: /service
+```
+
+The result has one item per file, without flattening arrays. Each glob is sorted, duplicate
+entries are retained, and a no-match glob is an error. Selectors apply per file. Optional
+`documents: all` makes each file a YAML document list before selection. Glob traversal has
+its own shared limit and does not bypass allowed roots. See
+[collecting files](docs/formats.md#collect-several-structured-files) for search order, symlinks,
+result shapes, and `IncludeLimits.max_glob_steps`.
 
 ## Loading and include boundaries
 
@@ -104,6 +164,7 @@ for string, text, and raw includes.
 `load_yaml_compose` when you want to explicitly select composition. For repeated loads or
 shared policies, configure a `YamlConfigLoader` once. The default parser uses PyYAML's
 `SafeLoader`; applications can provide a trusted custom loader for their own YAML tags.
+The optional LibYAML C extension is not required; the default uses the Python loader.
 
 Filesystem includes resolve relative to the file containing the reference. The default
 resolver is local-only; it does not fetch URLs. Resolved files must stay within allowed roots,
@@ -115,6 +176,8 @@ Applications can supply an `IncludeResolver` for their own trusted sources; see 
 Loading returns values, not an editable YAML syntax tree: comments, formatting, and per-key
 source provenance are not retained. PyYAML's scalar resolution rules remain in effect, and
 explicit duplicate mapping keys are rejected.
+Mappings use Python key equality, so typed keys such as `true` and `1` can collide across
+overlay sources; see the [documented example and string-key alternative](docs/design-notes.md#python-mapping-key-equality).
 
 When a nested include fails, the original PyYAML exception type and leaf mark are preserved.
 The error prints the route from the root include site to the failing source. Call

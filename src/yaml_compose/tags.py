@@ -11,7 +11,7 @@ COMPOSE_LOADER_TAG = "YamlCompose"
 """Value of ``%LOADER`` that opts a document into yaml-compose behavior."""
 
 INCLUDE_TAG = "!include"
-"""Tag that loads a structured YAML or registered-format document."""
+"""Tag that loads one structured document, or an explicit YAML document list."""
 
 INCLUDE_TABLE_TAG = "!include-table"
 """Tag that loads a CSV source as ordered rows of strings."""
