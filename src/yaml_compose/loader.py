@@ -448,6 +448,8 @@ class IncludeLoader(SafeLoader):
         self.load_stack = tuple(load_stack)
         self.budget = budget
         self.yaml_loader = yaml_loader
+        # IncludeLimits is the shared source-read/traversal budget. JSONPath
+        # additionally bounds each query over the completed value and its output.
         if type(jsonpath_limits) is not JsonPathLimits:
             raise TypeError("jsonpath_limits must be a JsonPathLimits profile")
         self.jsonpath_limits = jsonpath_limits

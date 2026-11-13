@@ -94,6 +94,15 @@ startup and serialization overhead for every query; this is not a streaming read
 Source-byte limits bound reading the original file. Separately, `JsonPathLimits` bounds the
 parsed value presented to the query and its results: aliases can expand and a small query
 can select large or repeated values. These are distinct budgets, not duplicate file limits.
+`IncludeLimits` is shared across the
+whole nested include tree; `JsonPathLimits` applies to each selection. A tiny YAML file
+with repeated aliases can yield a large expanded query input, and selecting the same value
+many times can yield a large result even when the source fits its byte budget.
+
+Use `include_limits` to control how many files/bytes may be read and how deeply includes
+may nest. Use `jsonpath_limits` to control query input depth/nodes, match count/output size,
+and execution time. Both are enforced: selecting a small result never excuses an oversized
+source, and allowing a large source never disables the query deadline.
 
 The default immutable `JsonPathLimits` profile is:
 

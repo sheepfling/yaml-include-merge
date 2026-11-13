@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import fnmatch
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Sequence
 from pathlib import Path
 
 from ._search import is_explicit_relative, search_locations
@@ -15,7 +15,7 @@ def _has_magic(part: str) -> bool:
     return any(character in part for character in "*?[")
 
 
-def _confined(path: Path, roots: tuple[Path, ...]) -> Path:
+def _confined(path: Path, roots: Iterable[Path]) -> Path:
     """Canonicalize before examining a directory or accepting a matched file."""
     resolved = path.resolve(strict=True)
     if not any(resolved.is_relative_to(root) for root in roots):
@@ -25,12 +25,16 @@ def _confined(path: Path, roots: tuple[Path, ...]) -> Path:
 
 def _matches_at(
     base: Path,
-    parts: tuple[str, ...],
-    roots: tuple[Path, ...],
+    parts: Sequence[str],
+    roots: Sequence[Path],
     step: Callable[[], None],
     max_matches: int | None,
 ) -> tuple[Path, ...]:
-    """Walk one location iteratively, without following discovered directory symlinks."""
+    """Walk without following discovered directory symlinks.
+
+    Parts need indexing; roots are traversed repeatedly for each candidate.
+    Accept read-only sequences rather than requiring a concrete tuple.
+    """
     step()
     try:
         base = _confined(base, roots)
