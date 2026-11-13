@@ -21,7 +21,9 @@ def test_matches_accepts_lists_and_reuses_roots_for_all_candidates(tmp_path: Pat
         (tmp_path / name).write_text("value: 1", encoding="utf-8")
     steps: list[None] = []
     result = _matches_at(tmp_path, ["*.yaml"], [tmp_path], lambda: steps.append(None), None)
-    assert result == (tmp_path / "a.yaml", tmp_path / "b.yaml")
+    assert result == [tmp_path / "a.yaml", tmp_path / "b.yaml"]
+    result.append(tmp_path / "consumer-added.yaml")
+    assert len(result) == 3
     assert len(steps) > 1
 
 

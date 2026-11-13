@@ -1,4 +1,11 @@
-"""Validate inert, tag-specific include options before resolving a source."""
+"""Validate inert, tag-specific include options before resolving a source.
+
+Validation deliberately starts from YAML nodes, not constructed dictionaries.
+This preserves duplicate options, source marks, and tags long enough to reject
+invalid requests without executing custom constructors or opening includes.
+A model validator over constructed values would not replace this boundary;
+the dataclasses below represent its already-validated normalized output.
+"""
 
 from __future__ import annotations
 

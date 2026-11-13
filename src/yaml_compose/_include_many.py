@@ -8,6 +8,7 @@ import yaml
 from yaml import Node
 
 from ._glob import expand_include_glob
+from ._include_errors import attach_include_route, include_error
 from ._include_specs import IncludeSpec, parse_many_include_spec
 from .resolver import FileSource, FileSystemIncludeResolver, IncludeRequest, ResolvedInclude, validate_include_name
 from .tags import INCLUDE_TAG
@@ -18,9 +19,6 @@ if TYPE_CHECKING:
 
 def construct_include_many(loader: IncludeLoader, node: Node) -> list[object]:
     """Return one completed selected value per source in deterministic order."""
-    # Imported at construction time to keep the loader/constructor dependency acyclic.
-    from .loader import _attach_include_route, _include_error  # pyright: ignore[reportPrivateUsage]
-
     frame = loader._route_frame(node, tag=INCLUDE_TAG)  # pyright: ignore[reportPrivateUsage]
     route = (*loader.include_route, frame)
     try:
@@ -37,7 +35,12 @@ def construct_include_many(loader: IncludeLoader, node: Node) -> list[object]:
             loader.budget.glob_steps += 1
             maximum = loader.budget.max_glob_steps
             if maximum is not None and loader.budget.glob_steps > maximum:
-                raise ValueError(f"maximum glob traversal steps ({maximum}) exceeded")
+                raise ValueError(
+                    "maximum glob traversal steps exceeded; "
+                    f"max_glob_steps={maximum}, observed={loader.budget.glob_steps}, "
+                    "cumulative across all globs in this top-level load; "
+                    "raise include_limits.max_glob_steps for trusted inputs"
+                )
 
         results: list[object] = []
         for source in spec.sources:
@@ -92,7 +95,7 @@ def construct_include_many(loader: IncludeLoader, node: Node) -> list[object]:
         raise
     except (OSError, ValueError, RuntimeError) as exc:
         try:
-            _include_error(node, str(exc), exc, tag=INCLUDE_TAG)
+            include_error(node, str(exc), exc, tag=INCLUDE_TAG)
         except yaml.YAMLError as error:
-            _attach_include_route(error, route)
+            attach_include_route(error, route)
             raise

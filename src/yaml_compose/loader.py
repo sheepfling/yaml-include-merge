@@ -14,15 +14,17 @@ from collections.abc import Callable, Hashable, Iterable
 from dataclasses import dataclass
 from io import StringIO
 from pathlib import Path
-from typing import Generic, NamedTuple, NoReturn, TextIO, cast, overload
+from typing import Generic, NamedTuple, TextIO, cast, overload
 
 import yaml
 from yaml import MappingNode, Node, SafeLoader, ScalarNode, SequenceNode
 from yaml.constructor import ConstructorError
-from yaml.error import MarkedYAMLError
 from yaml.resolver import BaseResolver
 
 from ._compat import _TypeVar
+from ._include_errors import IncludeRouteFrame, get_include_route
+from ._include_errors import attach_include_route as _attach_include_route
+from ._include_errors import include_error as _include_error
 from ._include_many import construct_include_many
 from ._include_specs import IncludeSpec, parse_include_spec
 from ._jsonpath import DEFAULT_JSONPATH_LIMITS, JsonPathLimits, select_jsonpath
@@ -116,106 +118,6 @@ class _StrippedLoaderDirective(NamedTuple):
 class _StreamIdentity(NamedTuple):
     path: Path | None
     display_name: str
-
-
-class IncludeRouteFrame(NamedTuple):
-    """One YAML include site on the route to a failed included source.
-
-    Lines and columns are one-based. ``resolved_source`` is ``None`` when
-    resolution failed before a canonical source identity was available.
-    """
-
-    including_source: str
-    line: int
-    column: int
-    tag: str
-    requested_path: str | None
-    resolved_source: str | None
-
-
-def _render_include_route(route: tuple[IncludeRouteFrame, ...]) -> str:
-    """Render a route once, from the root document toward the failure."""
-    lines = ["Include route (outermost first):"]
-    for frame in route:
-        requested = repr(frame.requested_path) if frame.requested_path is not None else "<invalid path>"
-        destination = f" -> {frame.resolved_source}" if frame.resolved_source is not None else ""
-        lines.append(f"  {frame.including_source}:{frame.line}:{frame.column} {frame.tag} {requested}{destination}")
-    return "\n".join(lines)
-
-
-def _is_route_prefix(
-    prefix: tuple[IncludeRouteFrame, ...],
-    route: tuple[IncludeRouteFrame, ...],
-) -> bool:
-    return len(prefix) <= len(route) and route[: len(prefix)] == prefix
-
-
-def get_include_route(error: BaseException) -> tuple[IncludeRouteFrame, ...]:
-    """Return the typed route attached to an include-related YAML error.
-
-    Non-include errors and errors raised by custom YAML exception subclasses
-    that cannot store attributes return an empty tuple; their rendered message
-    still includes the route when available.
-    """
-    route_value: object = getattr(error, "include_route", ())
-    route_candidates = cast(tuple[object, ...], route_value) if isinstance(route_value, tuple) else ()
-    if all(isinstance(frame, IncludeRouteFrame) for frame in route_candidates):
-        return cast(tuple[IncludeRouteFrame, ...], route_candidates)
-    return ()
-
-
-def _attach_include_route(
-    error: yaml.YAMLError,
-    route: tuple[IncludeRouteFrame, ...],
-) -> None:
-    """Attach structured route data without replacing the original YAML error."""
-    if not route:
-        return
-
-    previous = get_include_route(error)
-    if previous:
-        if _is_route_prefix(previous, route):
-            selected = route
-        elif _is_route_prefix(route, previous):
-            selected = previous
-        elif len(previous) == len(route) and all(
-            (old.including_source, old.line, old.column, old.tag, old.requested_path)
-            == (new.including_source, new.line, new.column, new.tag, new.requested_path)
-            for old, new in zip(previous, route, strict=True)
-        ):
-            selected = tuple(
-                old if old.resolved_source is not None else new for old, new in zip(previous, route, strict=True)
-            )
-        else:
-            selected = route
-    else:
-        selected = route
-
-    if selected == previous:
-        return
-
-    error_state_value: object = getattr(error, "__dict__", None)
-    error_state = cast(dict[str, object], error_state_value) if isinstance(error_state_value, dict) else None
-    base_message: object = error_state.get("_yaml_compose_base_message") if error_state is not None else None
-    if not isinstance(base_message, str):
-        if isinstance(error, MarkedYAMLError):
-            base_message = error.problem or error.context or str(error)
-        else:
-            base_message = str(error)
-        if error_state is not None:
-            error_state["_yaml_compose_base_message"] = base_message
-    if error_state is None and "Include route (outermost first):" in base_message:
-        return
-
-    rendered = f"{base_message}\n{_render_include_route(selected)}"
-    if isinstance(error, MarkedYAMLError):
-        # Keep the original PyYAML class and marks so existing exception
-        # handlers and source-location inspection continue to work.
-        error.problem = rendered
-    else:
-        error.args = (rendered,)
-    if error_state is not None:
-        error_state["include_route"] = selected
 
 
 @dataclass(slots=True)
@@ -390,24 +292,6 @@ def _construct_object(loader: SafeLoader, node: Node, *, deep: bool = True) -> o
         loader.construct_object,  # pyright: ignore[reportUnknownMemberType]
     )
     return construct(node, deep)
-
-
-def _include_error(
-    node: Node,
-    message: str,
-    cause: Exception | None = None,
-    *,
-    tag: str = INCLUDE_TAG,
-) -> NoReturn:
-    error = ConstructorError(
-        f"while resolving {tag}",
-        None,
-        message,
-        node.start_mark,
-    )
-    if cause is not None:
-        raise error from cause
-    raise error
 
 
 class IncludeLoader(SafeLoader):
@@ -595,9 +479,25 @@ class IncludeLoader(SafeLoader):
                 elif spec.json_path is not None:
                     value = select_jsonpath(value, spec.json_path, self.jsonpath_limits)
             except (ValueError, TypeError, RuntimeError) as exc:
+                detail = str(exc)
+                if (
+                    spec.json_path is not None
+                    and isinstance(exc, ValueError)
+                    and detail.startswith(
+                        (
+                            "JSONPath maximum ",
+                            "JSONPath execution timeout (",
+                            "JSONPath worker failed: ValueError: maximum ",
+                        )
+                    )
+                ):
+                    detail += (
+                        "; for larger trusted inputs configure jsonpath_limits=JsonPathLimits.generous(); "
+                        "see docs/jsonpath.md"
+                    )
                 _include_error(
                     node,
-                    f"cannot select {selector!r} from include {frame.requested_path!r}: {exc}",
+                    f"cannot select {selector!r} from include {frame.requested_path!r}: {detail}",
                     exc,
                     tag=frame.tag,
                 )

@@ -59,6 +59,22 @@ class IncludeLimits:
     max_total_include_bytes: int | None = _DEFAULT_MAX_TOTAL_INCLUDE_BYTES
     max_glob_steps: int | None = 100_000
 
+    @classmethod
+    def generous(cls) -> IncludeLimits:
+        """Return finite enlarged budgets for trusted, larger configurations.
+
+        Defaults and process-wide settings are unchanged. The profile allows
+        64 include levels, 8192 reads, 64 MiB per file, 512 MiB total, and
+        one million glob steps. It does not bound constructed-object memory.
+        """
+        return cls(
+            max_include_depth=64,
+            max_include_files=8192,
+            max_file_bytes=64 * 1024 * 1024,
+            max_total_include_bytes=512 * 1024 * 1024,
+            max_glob_steps=1_000_000,
+        )
+
     def __post_init__(self) -> None:
         """Reject invalid bounds before a limits profile can be used."""
         values = (

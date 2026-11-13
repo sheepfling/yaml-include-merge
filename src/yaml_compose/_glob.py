@@ -29,7 +29,7 @@ def _matches_at(
     roots: Sequence[Path],
     step: Callable[[], None],
     max_matches: int | None,
-) -> tuple[Path, ...]:
+) -> list[Path]:
     """Walk without following discovered directory symlinks.
 
     Parts need indexing; roots are traversed repeatedly for each candidate.
@@ -39,9 +39,9 @@ def _matches_at(
     try:
         base = _confined(base, roots)
     except FileNotFoundError:
-        return ()
+        return []
     if not base.is_dir():
-        return ()
+        return []
     pending = [(base, 0)]
     seen: set[tuple[Path, int]] = set()
     matches: set[Path] = set()
@@ -94,7 +94,7 @@ def _matches_at(
                     continue
                 if resolved.is_dir():
                     pending.append((resolved, position if recursive else position + 1))
-    return tuple(sorted(matches, key=lambda path: path.as_posix()))
+    return sorted(matches, key=lambda path: path.as_posix())
 
 
 def expand_include_glob(
@@ -102,7 +102,7 @@ def expand_include_glob(
     *,
     step: Callable[[], None],
     max_matches: int | None,
-) -> tuple[Path, ...]:
+) -> list[Path]:
     """Return files from the first matching lookup location in stable spelling order."""
     if isinstance(request.including, MemorySource):
         raise ValueError("filesystem globs cannot resolve relative to a memory source")

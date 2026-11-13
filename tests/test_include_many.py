@@ -256,8 +256,13 @@ def test_glob_steps_are_shared_across_repeated_and_nested_expansions(test_path: 
     )
     for _ in range(2):
         assert loader.load_include(StringIO("!include {sources: [{glob: '*.json'}]}")) == [1]
-    with pytest.raises(yaml.YAMLError, match="maximum glob traversal"):
+    with pytest.raises(yaml.YAMLError, match="maximum glob traversal") as caught:
         loader.load_include(StringIO("!include {sources: [{glob: '*.json'}, {glob: '*.json'}]}"))
+    message = str(caught.value)
+    assert f"max_glob_steps={steps}" in message
+    assert f"observed={steps + 1}" in message
+    assert "cumulative across all globs in this top-level load" in message
+    assert "include_limits.max_glob_steps" in message
     with pytest.raises(yaml.YAMLError, match="maximum glob traversal"):
         loader.load_include(StringIO("!include {sources: [{glob: 'outer.yaml'}]}"))
     assert load_yaml_compose(

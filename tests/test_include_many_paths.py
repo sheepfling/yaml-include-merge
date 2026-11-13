@@ -398,9 +398,9 @@ def test_native_windows_glob_anchor_is_not_wildcard_or_cwd(
 
     def capture(
         base: Path, parts: tuple[str, ...], roots: tuple[Path, ...], step: Callable[[], None], max_matches: int | None
-    ) -> tuple[Path, ...]:
+    ) -> list[Path]:
         captured.append((base, parts))
-        return (base / "result.json",)
+        return [base / "result.json"]
 
     # Do not open a device path, drive, or UNC share: only the lexical prefix is tested.
     monkeypatch.setattr("yaml_compose._glob._matches_at", capture)
@@ -411,6 +411,6 @@ def test_native_windows_glob_anchor_is_not_wildcard_or_cwd(
         allowed_roots=(FileRoot(Path(prefix)),),
         include_search="local-first",
     )
-    assert expand_include_glob(request, step=lambda: None, max_matches=None) == (Path(prefix) / "result.json",)
+    assert expand_include_glob(request, step=lambda: None, max_matches=None) == [Path(prefix) / "result.json"]
     assert captured == [(Path(prefix), ("*.json",))]
     assert captured[0][0].is_absolute()

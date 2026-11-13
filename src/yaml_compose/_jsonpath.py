@@ -41,6 +41,24 @@ class JsonPathLimits:
     max_output_bytes: int = 8_388_608
     timeout_seconds: float = 2.0
 
+    @classmethod
+    def generous(cls) -> JsonPathLimits:
+        """Return finite enlarged query budgets for trusted, larger inputs.
+
+        Allow 64 KiB queries, 64 MiB input/output, one million input nodes,
+        depth 256, 100000 matches, and a ten-second worker deadline.
+        This changes neither defaults nor the absence of a memory sandbox.
+        """
+        return cls(
+            max_query_bytes=64 * 1024,
+            max_input_bytes=64 * 1024 * 1024,
+            max_input_nodes=1_000_000,
+            max_input_depth=256,
+            max_matches=100_000,
+            max_output_bytes=64 * 1024 * 1024,
+            timeout_seconds=10.0,
+        )
+
     def __post_init__(self) -> None:
         """Reject disabled, non-finite, boolean, and incorrectly typed limits."""
         for name in (

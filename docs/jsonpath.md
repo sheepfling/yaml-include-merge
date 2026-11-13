@@ -139,3 +139,27 @@ can allocate intermediate structures or perform expensive regular-expression wor
 producing matches. The deadline limits how long that evaluation process can continue, but
 cannot guarantee a peak-memory bound or make arbitrary untrusted workloads harmless. Existing
 YAML parsing and caller-supplied constructors are also outside this evaluation deadline.
+
+## Larger trusted configurations
+
+Choose finite, enlarged profiles explicitly rather than disabling bounds:
+
+```python
+from yaml_compose import IncludeLimits, JsonPathLimits, YamlConfigLoader
+
+loader = YamlConfigLoader(
+    include_limits=IncludeLimits.generous(),
+    jsonpath_limits=JsonPathLimits.generous(),
+)
+```
+
+`IncludeLimits.generous()` permits 64 include levels, 8,192 file reads, 64 MiB per
+file, 512 MiB total included bytes, and 1,000,000 glob steps. `JsonPathLimits.generous()`
+permits 64 KiB queries, 64 MiB serialized input and output, 1,000,000 input nodes,
+depth 256, 100,000 matches, and a 10-second worker deadline.
+
+Each call creates a fresh profile; neither changes package or process-wide defaults.
+Use these conveniences for trusted larger configurations and tune individual fields if
+needed. Larger limits permit more CPU and memory use, and parser/runtime limits may still
+apply. They do not promise that every input within these bounds will succeed and are not
+a security or memory sandbox.
