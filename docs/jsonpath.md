@@ -3,10 +3,11 @@
 `json_path` on an `!include` options mapping selects a list of values from a fully
 constructed source. It is a
 separate operation from JSON Pointer: its query is never appended to, parsed out of, or
-percent-decoded as part of a filename. JSONPath is included in a normal installation:
+percent-decoded as part of a filename. JSONPath is a required dependency of the structured
+include implementation. When trying unreleased features, install from the matching checkout rather than an older PyPI release:
 
 ```shell
-python -m pip install yaml-compose
+python -m pip install .
 ```
 
 The package requires [python-jsonpath](https://jg-rp.github.io/python-jsonpath/) with its `strict`
@@ -19,6 +20,9 @@ custom functions or callbacks. An incomplete installation fails explicitly; ther
 engine. JSON Pointer uses built-in exact traversal rather than this engine.
 Alternative YAML parser backends are separate from selection and remain future optional
 integrations; the supported default remains PyYAML.
+
+The [runnable selection showcase](examples.md#select-values-with-object-options) provides all
+input files and exact expected outputs, including multi-document and multi-file nesting.
 
 ## Syntax and results
 

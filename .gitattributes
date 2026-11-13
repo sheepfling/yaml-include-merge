@@ -1,2 +1,4 @@
 examples/include_csv/people.csv text eol=lf
 examples/include_non_yaml/notes.md text eol=lf
+examples/include_selection/notes.txt text eol=lf
+examples/include_selection/payload.txt text eol=lf

@@ -136,6 +136,9 @@ The document-list root is retained even for a single document, so indexing and s
 Scalar `!include` and the default `documents: single` keep single-document behavior.
 See [YAML streams](docs/formats.md#yaml-document-streams).
 
+For a complete runnable example with source files and exact expected output, see the
+[object-form selection showcase](docs/examples.md#select-values-with-object-options).
+
 ## Collect several files
 
 Use `!include` with a nonempty `sources` list for ordered structured sources. Supply exactly
