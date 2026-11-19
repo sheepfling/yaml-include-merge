@@ -115,6 +115,14 @@ base: !include 'base.yaml'
 label: base.yaml
 ```
 
+Use `IncludeTable` to emit `!include-table` explicitly for a CSV table. The writer does not infer tags from extensions:
+
+```python
+from yaml_compose import Include, IncludeTable, dump
+
+dump({"settings": Include("settings.json"), "rows": IncludeTable("data.csv")}, "manifest.yaml")
+```
+
 The writer emits one UTF-8 document using PyYAML's safe dumper. It does not read or resolve the referenced files.
 Relative includes are resolved by the loader when the manifest is read. This is not a round-trip editor:
 comments, formatting, and structured include options are outside this writer's scope.

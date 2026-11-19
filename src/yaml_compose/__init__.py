@@ -62,7 +62,7 @@ from .tags import (
     REPLACE_TAG,
     SPREAD_TAG,
 )
-from .writer import Include, dump
+from .writer import Include, IncludeTable, dump
 
 __all__ = (
     "COMPOSE_LOADER_TAG",
@@ -102,6 +102,7 @@ __all__ = (
     "IncludeRouteFrame",
     "IncludeSearch",
     "IncludeSource",
+    "IncludeTable",
     "IniAdapter",
     "MemoryIncludeResolver",
     "MemoryRoot",
