@@ -98,6 +98,35 @@ The [worked format examples](docs/examples.md#include-json-and-toml-sources) cov
 TOML, JSONC, JSON5, JSON Lines, NDJSON, and CSV. See the [INI, dotenv, and text examples](docs/examples.md#ini-dotenv-and-text-includes)
 for string, text, and raw includes.
 
+## Write a manifest from Python
+
+Use an explicit marker for literal relative includes; ordinary strings remain ordinary YAML values.
+
+```python
+from yaml_compose import Include, dump
+
+dump({"base": Include("base.yaml"), "label": "base.yaml"}, "manifest.yaml")
+```
+
+```yaml
+%LOADER YamlCompose
+---
+base: !include 'base.yaml'
+label: base.yaml
+```
+
+Use `IncludeTable` to emit `!include-table` explicitly for a CSV table. The writer does not infer tags from extensions:
+
+```python
+from yaml_compose import Include, IncludeTable, dump
+
+dump({"settings": Include("settings.json"), "rows": IncludeTable("data.csv")}, "manifest.yaml")
+```
+
+The writer emits one UTF-8 document using PyYAML's safe dumper. It does not read or resolve the referenced files.
+Relative includes are resolved by the loader when the manifest is read. This is not a round-trip editor:
+comments, formatting, and structured include options are outside this writer's scope.
+
 ## Loading and include boundaries
 
 `load_yaml_file` handles both ordinary YAML and documents opted into composition. Use
