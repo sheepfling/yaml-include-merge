@@ -62,6 +62,7 @@ from .tags import (
     REPLACE_TAG,
     SPREAD_TAG,
 )
+from .writer import Include, dump
 
 __all__ = (
     "COMPOSE_LOADER_TAG",
@@ -91,6 +92,8 @@ __all__ = (
     "FormatParseError",
     "FormatRegistry",
     "FormatSelection",
+    "Include",
+
     "IncludeLimits",
     "IncludeLoader",
     "IncludeRequest",
@@ -111,6 +114,8 @@ __all__ = (
     "YamlConfigLoader",
     "YamlIncludeError",
     "YamlType",
+    "dump",
+
     "get_default_include_limits",
     "get_include_route",
     "load_yaml_compose",
